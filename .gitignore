@@ -1,0 +1,35 @@
+# ===== 通用忽略规则 =====
+# 密钥与本地配置，绝不提交
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+
+# 前端
+node_modules/
+dist/
+*.local
+
+# 本地数据与日志
+backend/data/
+*.log
+logs/
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+
+# 系统
+Thumbs.db
+.DS_Store
+
+# WorkBuddy 私有数据(工作日志/记忆,含隐私,不入库)
+.workbuddy/

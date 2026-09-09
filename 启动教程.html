@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="zSKzkv7R72U9SEQlcrtJ1b">
+<head data-page-node-id="HWohkBeLc16OUGLd1eUHYl">
+<meta charset="UTF-8" data-page-node-id="XdQxOrLn8LVoWK346AeMsY">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="dFd3fYWBAvZ0yQsFUf9blj">
+<title>知识库问答系统 · 手动启动教程</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #f5f7fa; color: #2c3e50; line-height: 1.8;
+    padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 {
+    text-align: center; font-size: 28px; color: #1a3a5c;
+    margin-bottom: 6px;
+  }
+  .sub { text-align: center; color: #7f8c8d; font-size: 14px; margin-bottom: 28px; }
+  .layer-box {
+    background: #fff; border-radius: 14px; padding: 18px 22px; margin-bottom: 22px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.06); border-left: 6px solid #3498db;
+  }
+  .layer-box.green { border-left-color: #27ae60; }
+  .layer-box.orange { border-left-color: #e67e22; }
+  .layer-box.purple { border-left-color: #9b59b6; }
+  .layer-title { font-size: 19px; font-weight: bold; margin-bottom: 6px; }
+  .layer-box p, .layer-box li { font-size: 15px; color: #444; }
+  .layer-box ul { padding-left: 22px; }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 20px;
+    font-size: 13px; color: #fff; margin-right: 6px;
+  }
+  .badge.blue { background: #3498db; }
+  .badge.green { background: #27ae60; }
+  .badge.orange { background: #e67e22; }
+  .badge.gray { background: #95a5a6; }
+
+  .step {
+    background: #fff; border-radius: 14px; padding: 20px 24px; margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.06); position: relative;
+  }
+  .step-num {
+    position: absolute; top: -14px; left: 20px; width: 34px; height: 34px;
+    background: #1a3a5c; color: #fff; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; font-size: 17px;
+  }
+  .step h2 { font-size: 18px; color: #1a3a5c; margin: 6px 0 10px; }
+  .step .why { background: #eaf4fd; border-radius: 8px; padding: 8px 14px; font-size: 14px; color: #2c6fae; margin-bottom: 10px; }
+  .step .do { font-size: 15px; }
+  .step .do b { color: #e67e22; }
+  .cmd {
+    background: #1e1e2e; color: #a6e3a1; border-radius: 8px;
+    padding: 10px 16px; font-family: Consolas, monospace; font-size: 14px;
+    margin: 8px 0; word-break: break-all; user-select: all;
+  }
+  .ok { color: #27ae60; font-weight: bold; }
+  .warn { color: #e67e22; font-weight: bold; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 8px 0; }
+  th, td { border: 1px solid #dcdde1; padding: 8px 10px; text-align: left; }
+  th { background: #f0f3f6; }
+  .note { background: #fef9e7; border-left: 4px solid #f1c40f; padding: 10px 14px; font-size: 14px; border-radius: 6px; margin-top: 10px; }
+  .stop-tip { background: #fdedec; border-left: 4px solid #e74c3c; padding: 10px 14px; font-size: 14px; border-radius: 6px; }
+  .big { font-size: 16px; font-weight: bold; }
+</style>
+</head>
+<body data-page-node-id="jWhlm4jK5JlsMCewc8sJBE">
+<div class="wrap" data-page-node-id="QuRUGcHAhKE3KyBDw9Ewbk">
+  <h1 data-page-node-id="POl4xMMKPaL5FkFbqSJeIZ">📘 知识库问答系统 · 手动启动教程</h1>
+  <p class="sub" data-page-node-id="7JQqUUDCpiVjkfuGShX8m1">写给零基础用户 · 跟着做就能把系统跑起来</p>
+
+  <!-- 架构说明 -->
+  <div class="layer-box" data-page-node-id="oTNhCGlTkGa4DvhVGaUtgD">
+    <div class="layer-title" data-page-node-id="1HF6EMRdWJlxaj8EVOFVgq">🧩 先认识系统由 3 个"零件"组成</div>
+    <p data-page-node-id="4cqeoSNyPr5MtD6733s8rG">启动顺序必须是 <b data-page-node-id="Hm91TOcJRRa73m3FYMzmrU">① → ② → ③</b>,就像先开门、再开灯、最后进房间:</p>
+    <table data-page-node-id="3W2NTHbY8AalkupvW8hTGe">
+      <tr data-page-node-id="Aw3hixDqGrwH9FXgChtJBQ"><th data-page-node-id="YU9CqZiZW07Amy20TJqOc0">顺序</th><th data-page-node-id="JrxzzhDPuLxYfkJ22pPnrk">零件</th><th data-page-node-id="XELspwsvUBCsrhKHQfyUAU">是什么(大白话)</th><th data-page-node-id="N7Yuvr8DHjNeSlMwGGNpUA">怎么启动</th></tr>
+      <tr data-page-node-id="uyJboZbKnuqbgPSz0QGNGY"><td data-page-node-id="lNsScYWODVxnuGwqPJdGth"><span class="badge gray" data-page-node-id="8nJcMUHDG990vxpqMUZQXf">①</span></td><td data-page-node-id="bkdx82tFnnZOR9FU5REDkx"><b data-page-node-id="WvTTUgatwo5T9qS4XI2JlX">Docker + 数据库容器</b></td><td data-page-node-id="D1Ky5BIFE7DFx53hx9FCQJ">存放文档和索引的"货架",靠 Docker 这个"大箱子"装着</td><td data-page-node-id="EfCKaJPsu7JXPwf6hFSlv5">先开 Docker Desktop,再双击脚本</td></tr>
+      <tr data-page-node-id="YROBGkaAvbNCQJC1qc8g2Y"><td data-page-node-id="poc6aKfSlCgMPhZHcg0Hwe"><span class="badge orange" data-page-node-id="vJyBCgPdeFsoFD7CCMY4x1">②</span></td><td data-page-node-id="OoonmqrsXKmiO8CKUDGgEt"><b data-page-node-id="wUzTdqMnhZ6s0sOVK4QUFK">后端服务(大脑)</b></td><td data-page-node-id="HzMT0ECoznEEzjJVVR9Y8T">负责检索、调 AI、组织回答的"管家"</td><td data-page-node-id="uE1lER1f1EIRQUDphc50BT">双击 start-backend.bat</td></tr>
+      <tr data-page-node-id="8knXExhHtlSUSxnu4IAHQK"><td data-page-node-id="TC1Ly3pDt1OrgndScsxH9j"><span class="badge green" data-page-node-id="5mwPNXlasV5OLqCjX2REDy">③</span></td><td data-page-node-id="jdEzGEqlxALf3GmVja9eZE"><b data-page-node-id="nq9gD7AgL92oqyARfAPo3a">前端界面(门面)</b></td><td data-page-node-id="zWBQIH6I0RyI3g6mDJXa2G">您在浏览器里看到的聊天页面</td><td data-page-node-id="VazB8EJwaeFmkDTk7Ie43j">双击 start-frontend.bat</td></tr>
+    </table>
+  </div>
+
+  <!-- 步骤 1 -->
+  <div class="step" data-page-node-id="Ac19lPGZX2TUrEE8Gy0MfS">
+    <div class="step-num" data-page-node-id="WyoCRt94vQijJNACyxc21c">1</div>
+    <h2 data-page-node-id="kfa6NO9fIOXfzRPvOCGioq">启动 Docker Desktop(打开"大箱子")</h2>
+    <div class="why" data-page-node-id="Slz6ne104TNGNPpWFYM6vN">💡 为什么:数据库(PostgreSQL + Qdrant)装在 Docker 里,Docker 不启动,后面一切白搭。</div>
+    <div class="do" data-page-node-id="lMqoPA917X4ASeHg8A1zTe">
+      在桌面或开始菜单找到 <b data-page-node-id="zRu1XluFkBWNWhmHDhtlrP">Docker Desktop</b>(图标是🐳一条载货的鲸鱼),<b data-page-node-id="pWDQtod0B3yfGnzjX9EQhL">双击打开</b>。<br data-page-node-id="s5gQpteZDYWODGD3Hu18PD">
+      然后等右下角/鲸鱼图标变成稳定的样子(首次约 30~60 秒,界面显示 <span class="ok" data-page-node-id="ZlCpIgrJxJsDil9YBdCb47">"Engine running"</span>)。<br data-page-node-id="txGNSwwwoxgAAurEwhdgh8">
+      <div class="note" data-page-node-id="8LEUnn1fjb3NBye9Nsjzfu">⏳ 判断成功的标准:任务栏鲸鱼图标不再转圈,或 Docker 主界面左上角显示绿色的 "running"。</div>
+    </div>
+  </div>
+
+  <!-- 步骤 2 -->
+  <div class="step" data-page-node-id="kke8hRGJv7YosVik6XGjYT">
+    <div class="step-num" data-page-node-id="piYRYU7OqvEsfs6N7cyEs2">2</div>
+    <h2 data-page-node-id="oeIFb5vSKejPbMlX2a5sqX">启动数据库容器(把"货架"摆好)</h2>
+    <div class="why" data-page-node-id="gOzhIOQ4GAFtwG3trIknMN">💡 为什么:光有 Docker 箱子还不行,得把 PostgreSQL(存文档信息)和 Qdrant(存语义索引)两个容器拉起来。</div>
+    <div class="do" data-page-node-id="qUPUhDcuyq5LPEUficGi4t">
+      打开文件夹:<b data-page-node-id="J7grl4Ha9AbbyP7nrYsrSC">E:\自制工具\langchain RAG项目\scripts</b><br data-page-node-id="0f9vFmY6ENPDTEtTuldomh">
+      找到 <b data-page-node-id="kTJNFaPlcQtBYiBOSQ5EBU">start-docker.bat</b>,<b data-page-node-id="XE7YHFXjwEw8nkiFoOTFdF">双击</b>它。<br data-page-node-id="AAVWF5fXq06Jxe4iEccMkQ">
+      会弹出黑色窗口,自动运行,最后显示两个容器 <span class="ok" data-page-node-id="O5SUShZKymX8CVnQm3L3yJ">Started / Up</span>:<br data-page-node-id="a3KJ48w0WFJ4wJ9dRjBbQy">
+      <div class="cmd" data-page-node-id="WoLOdEPhG8Xkyfg2ZYUVq9">kbqa-postgres   Up ...<br data-page-node-id="v9An2ruIvSed9LK9Alg6Bq">kbqa-qdrant     Up ...</div>
+      <div class="note" data-page-node-id="OsLJNlRpu2CeHh5TLp7kwn">⏳ 这个窗口<b data-page-node-id="H8cxVVtMoAfx8jnTHx4rCa">不要关</b>(关了不影响,但建议留着)。看到 "Up" 字样即成功。若窗口一闪而过,说明出错了,截图给我看。</div>
+    </div>
+  </div>
+
+  <!-- 步骤 3 -->
+  <div class="step" data-page-node-id="XljIcyWdFRil9P2iEYGvt1">
+    <div class="step-num" data-page-node-id="2gDDT8XwOcj0WZKzVlUn1l">3</div>
+    <h2 data-page-node-id="UREdJpYlz31PYp5wH4nCzr">启动后端(把"管家"叫醒)</h2>
+    <div class="why" data-page-node-id="aEMHd5qWQqAXlM0DLjL6VE">💡 为什么:管家负责接住您的问题、去货架找资料、再喊 AI 来回答。</div>
+    <div class="do" data-page-node-id="MSW9iKXxvXzMUjG47m5jWR">
+      还是在 <b data-page-node-id="RzB3Z7r2AUC3Gw5dI0qS00">scripts</b> 文件夹里,找到 <b data-page-node-id="Jw8YkCi0jjhRETnQstO2u0">start-backend.bat</b>,<b data-page-node-id="vSzVEvbg7R8BzgCwx0tvAX">双击</b>。<br data-page-node-id="VfT49xgGfIXBG4ZghYnlLA">
+      黑色窗口会滚动日志,最后出现类似:<br data-page-node-id="oJgQK3q8sLlTWdxAbCo9rR">
+      <div class="cmd" data-page-node-id="j8VQzOIGg72rZkkhr7HK1y">Uvicorn running on http://127.0.0.1:8000</div>
+      <div class="note" data-page-node-id="mRZqm9fonjCHkMtEDaCApW">⏳ 这个窗口<b data-page-node-id="8ujFwETdSeyUwtacrUGDDd">千万别关</b>——关掉 = 管家下班 = 系统不能用。看到 "Uvicorn running" 即成功。</div>
+    </div>
+  </div>
+
+  <!-- 步骤 4 -->
+  <div class="step" data-page-node-id="9DMnnKq7lVukPZHzBJfHfy">
+    <div class="step-num" data-page-node-id="G4v4vT1t2FJ59vNGB96W6n">4</div>
+    <h2 data-page-node-id="fIUXAleyjY7lBG8x7siNXC">启动前端(打开"门面")</h2>
+    <div class="why" data-page-node-id="wBaBAaqWtqdYvaP2QtUthI">💡 为什么:前端就是您在浏览器里看到的聊天界面,它把后端的回答画出来。</div>
+    <div class="do" data-page-node-id="EMsWp3DneCbJ2ULdOwr6RM">
+      找到 <b data-page-node-id="HDeO1W39caw1Iu4aUjlfwA">start-frontend.bat</b>,<b data-page-node-id="4QJaLKYwUDrRM2FQXL4YnJ">双击</b>。<br data-page-node-id="cGES01b4slDCNeuVSDIiy5">
+      黑色窗口出现:<br data-page-node-id="tAulyPc57DFajnfCqtz9CP">
+      <div class="cmd" data-page-node-id="L7ggTTRsq37OfCsr89z3GQ">Local:   http://localhost:5173/</div>
+      <div class="note" data-page-node-id="u7ATxX1QgGHRtu1SxZyPdM">⏳ 这个窗口同样<b data-page-node-id="B1aOxgZbVplbOGHCeDa4py">别关</b>。看到 "Local" 即成功。</div>
+    </div>
+  </div>
+
+  <!-- 步骤 5 -->
+  <div class="step" data-page-node-id="S3Ewf7YWtTjAyCJWP0PzHO">
+    <div class="step-num" data-page-node-id="a1UHd4ojorcJq9wd1ccv3e">5</div>
+    <h2 data-page-node-id="hxAYkIE92BECk74TuaGFgl">打开浏览器,开始使用 🎉</h2>
+    <div class="do" data-page-node-id="1e16ytxtJDScSgdkHLdPsB">
+      打开 Chrome / Edge,地址栏输入:<br data-page-node-id="r5OMGRCVwxCRCcKK8k3H9n">
+      <div class="cmd" data-page-node-id="LAzCONpIRZx3gL5AfbIiqH">http://localhost:5173</div>
+      回车 → 登录页 → 输入 <b data-page-node-id="8hvj1fphlAKRP5KuQQlt2F">管理员账号 pjs / 123456</b> → 进入系统,就能问答了。
+    </div>
+  </div>
+
+  <!-- 停止 -->
+  <div class="layer-box" data-page-node-id="PlTa2F6E6QVPvQY5t7bb4M">
+    <div class="layer-title" data-page-node-id="qWWWHj8Dv57uRCZKrF81Uo">🛑 如何停止系统(和启动顺序相反)</div>
+    <div class="stop-tip" data-page-node-id="VmJBTF6rOV0uCSmPWD0Ndo">停止原则:先关"门面",再关"管家",最后关"货架"。顺序反了可能导致数据损坏。</div>
+    <table data-page-node-id="jtQZNmqnEVmAIvGvRLzC2J">
+      <tr data-page-node-id="lae7SeUmCXFk8JugLtaTXE"><th data-page-node-id="47sG6hxkCbOKSO2O5I2jdQ">顺序</th><th data-page-node-id="S3HQPcZkSYHIZNgqcJtA2f">操作</th><th data-page-node-id="thcQE4WxALlK71zm2uZguj">大白话</th></tr>
+      <tr data-page-node-id="XBUkeDQAJsDH6HTZx5ZadI"><td data-page-node-id="HUjsjBZmdPPGLEDW8GlaWv">1</td><td data-page-node-id="ISwI2CbAuQnFageoFdvA9f">关闭<b data-page-node-id="YUURlUII9jtFA6du1QrMQD">前端黑窗口</b>(start-frontend 那个)</td><td data-page-node-id="YYDVCA6ELblZ1GtotztmnY">让门面歇业</td></tr>
+      <tr data-page-node-id="bnB5NRj6dALDFwd7tztLMw"><td data-page-node-id="VzNEy9mDo8bYIOhlrpe1rM">2</td><td data-page-node-id="Q2NS7JrUdobPUlMv1Mj7wM">关闭<b data-page-node-id="xHAhWpPZdAp5hYbYn5m5Do">后端黑窗口</b>(start-backend 那个)</td><td data-page-node-id="GtHBeTJNs2SIUaURFmPyoI">让管家下班(窗口内按 Ctrl+C 更稳妥)</td></tr>
+      <tr data-page-node-id="BYC29IvaZyGB9pvfYZhCGr"><td data-page-node-id="uJpic6fwna1GcNwGTCYUit">3</td><td data-page-node-id="nFuExeLbzkwFIAbp1acZKm">双击 <b data-page-node-id="5PRgTrOjovBPn9yToXzu2H">stop-docker.bat</b> 或手动在 Docker Desktop 里停止容器</td><td data-page-node-id="Aw9OcCFPEVIpWkFjlbpOdt">收起货架(可选,嫌麻烦可一直开着)</td></tr>
+      <tr data-page-node-id="2nZ3pzLSmdCuH1CtnhZVsj"><td data-page-node-id="uHN60tFwCcd6FzHt8fVtGa">4</td><td data-page-node-id="Phe8kuryChKEJ0D4qUDAaX">退出 Docker Desktop(右键托盘鲸鱼图标 → Quit)</td><td data-page-node-id="ilJn2woLGaBFnqkouyH62D">关掉大箱子</td></tr>
+    </table>
+    <div class="note" data-page-node-id="uxbyfWEES4TyCJ62KDRLFb">💡 省事提示:日常用完只需关第 1、2 步的窗口(前后端),Docker 留着不关,下次直接双击两个 bat 就恢复,几秒钟的事。</div>
+  </div>
+
+  <!-- 常见问题 -->
+  <div class="layer-box purple" data-page-node-id="XY4hHy2NKyOI73fRMtGK7k">
+    <div class="layer-title" data-page-node-id="8qtjYmMPSCs0HOekilazA3">❓ 常见问题自查</div>
+    <table data-page-node-id="vQMRlMlHllGbgYJqGPpHYZ">
+      <tr data-page-node-id="US10cidEFWUaguGhPS4tdq"><th data-page-node-id="8tIcua6x4OLfvQLJCR1ZCU">现象</th><th data-page-node-id="MS4MPelXqweKoHPhLamuyF">原因 & 处理</th></tr>
+      <tr data-page-node-id="GrlFxEwolN0afDueXb2OMh"><td data-page-node-id="Hbenvx8UAcLG8MndyR34XO">双击 bat 一闪而过/报错</td><td data-page-node-id="3rM7kYUQHnVO5PdXfGGWQq">多半是没按顺序——先确认 Docker Desktop 已开、容器已 Up</td></tr>
+      <tr data-page-node-id="Z6UZ52jqEw8kOVk0Uj84P8"><td data-page-node-id="moDGy6jsDiDXEEiskqBCke">浏览器打不开 5173</td><td data-page-node-id="eFbx6J4UaCVl1VMaZr6ZVj">看第 4 步窗口是否还开着;关了窗口 = 服务停了</td></tr>
+      <tr data-page-node-id="NzEn2wAmAOsP1koWtgos44"><td data-page-node-id="QrclC8Ndg9n6gUx5QurDJS">登录报"无法连接服务器"</td><td data-page-node-id="LSTtNQSBpKpBVQvu6rvyy2">第 2、3 步的窗口还在吗?都在且显示 Up/running 就刷新页面</td></tr>
+      <tr data-page-node-id="cCVA8lPWJE2bg84FzJzr4x"><td data-page-node-id="DUxvsqIA0vBztDQCRimCBd">端口被占用(8000/5173 已在使用)</td><td data-page-node-id="NAvOKdrKZDNeXb45Ig7OMH">可能有旧实例没关干净,重启电脑最省事</td></tr>
+      <tr data-page-node-id="wtD7k1yccVbsZwOiZuL4Vz"><td data-page-node-id="CDDEnBRkupDt39j2sGhvH6">Docker 图标一直是黄的/转圈</td><td data-page-node-id="jQsv5Sr0qAwrSNIHL4ZQAM">Docker 还在启动,多等一会儿;超 2 分钟就重启 Docker Desktop</td></tr>
+    </table>
+  </div>
+
+  <p style="text-align:center; color:#95a5a6; font-size:13px; margin-top:20px;" data-page-node-id="Ag2kaGFZdDmepGwBxvD4Hg">
+    有一步卡住了?把黑色窗口内容截图发给 AI 助手即可。
+  </p>
+</div>
+</body>
+</html>

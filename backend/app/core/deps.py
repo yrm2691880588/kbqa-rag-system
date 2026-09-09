@@ -1,0 +1,76 @@
+"""FastAPI 依赖：鉴权、角色校验、登录限流。"""
+
+import hashlib
+import time
+from collections import defaultdict, deque
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import TokenError, decode_token
+from app.db.session import get_db
+from app.models.user import User
+
+# Bearer 令牌认证（前端在请求头带 Authorization: Bearer <token>）
+_bearer = HTTPBearer(auto_error=False)
+
+# 简单的登录防爆破：记录每个 IP 最近 1 分钟内的登录尝试次数（内存实现）
+_login_attempts: dict[str, deque[float]] = defaultdict(deque)
+_LOGIN_MAX_PER_MINUTE = 10
+
+
+def _check_login_rate(ip: str) -> None:
+    """1 分钟内登录尝试超过 10 次就临时拒绝，防止密码被暴力猜。"""
+    now = time.monotonic()
+    bucket = _login_attempts[ip]
+    while bucket and now - bucket[0] > 60:  # 清掉 1 分钟前的记录
+        bucket.popleft()
+    if len(bucket) >= _LOGIN_MAX_PER_MINUTE:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "尝试次数过多，请 1 分钟后再试")
+    bucket.append(now)
+
+
+def sha256_hex(text: str) -> str:
+    """令牌只存哈希（单向），防数据库泄露。"""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """解析请求头里的访问令牌 → 查出对应用户；无效则 401。"""
+    if credentials is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "未登录或登录已过期", headers={"WWW-Authenticate": "Bearer"}
+        )
+    try:
+        payload = decode_token(credentials.credentials, expected_type="access")
+    except TokenError as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, str(exc), headers={"WWW-Authenticate": "Bearer"}
+        ) from exc
+    user = await db.get(User, int(payload["sub"]))
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户不存在或已被禁用")
+    return user
+
+
+async def require_admin(current_user: Annotated[User, Depends(get_current_user)]) -> User:
+    """管理员专用接口的依赖：非 admin 一律 403。"""
+    if current_user.role != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "需要管理员权限")
+    return current_user
+
+
+# 类型别名，让路由签名更简洁
+CurrentUser = Annotated[User, Depends(get_current_user)]
+AdminUser = Annotated[User, Depends(require_admin)]
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+def login_rate_limiter(request: Request) -> None:
+    """登录接口专用依赖：取客户端 IP 做限流。"""
+    _check_login_rate(request.client.host if request.client else "unknown")

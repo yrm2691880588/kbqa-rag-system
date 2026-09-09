@@ -1,0 +1,46 @@
+# 企业级电商知识库 RAG 问答系统 —— Docker 底层服务
+# Qdrant：专业向量搜索数据库（存知识库片段的"数字指纹"）
+# PostgreSQL：业务数据库（存用户/会话/消息/知识库元数据）
+#
+# 使用方法（在本文件所在目录执行）：
+#   docker compose up -d    启动
+#   docker compose down     停止（保留数据）
+#   docker compose down -v  停止并清空数据（慎用）
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: kbqa-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # HTTP 管理/检索接口
+      - "6334:6334"   # gRPC 高性能接口
+    volumes:
+      - qdrant_data:/qdrant/storage   # 向量数据持久化，容器删了数据还在
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: kbqa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kbqa
+      POSTGRES_PASSWORD: kbqa_dev_pw
+      POSTGRES_DB: kbqa
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # 业务数据持久化
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kbqa -d kbqa"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  qdrant_data:
+  pgdata:
