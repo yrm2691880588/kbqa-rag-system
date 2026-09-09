@@ -27,10 +27,16 @@ services:
     image: postgres:16-alpine
     container_name: kbqa-postgres
     restart: unless-stopped
+    # 数据库账号密码通过环境变量注入，文件内不写任何明文口令：
+    # 在 docker-compose.yml 同目录建 .env（已 gitignore，不会上传）填入：
+    #   POSTGRES_USER=kbqa
+    #   POSTGRES_PASSWORD=你的本地数据库密码
+    #   POSTGRES_DB=kbqa
+    # 模板见仓库根目录 .env.example（占位符，可提交）
     environment:
-      POSTGRES_USER: kbqa
-      POSTGRES_PASSWORD: kbqa_dev_pw
-      POSTGRES_DB: kbqa
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:

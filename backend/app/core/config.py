@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
 
     # 数据库连接串（PostgreSQL 主方案 / SQLite 轻量降级方案）
-    database_url: str = "postgresql+asyncpg://kbqa:kbqa_dev_pw@127.0.0.1:5432/kbqa"
+    # 安全约定：源码不写死默认口令。必须由 backend/.env 的 DATABASE_URL 提供
+    # （首次使用：复制 .env.example 为 .env 并填写。留空则后端启动连接数据库时会报错提示）
+    database_url: str = ""
 
     # 安全：JWT 签名密钥与令牌有效期
     secret_key: str = "dev-secret-change-me"
@@ -23,8 +25,10 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
 
     # 首次启动自动创建的管理员账号
+    # 安全约定：密码不设默认值，必须由 backend/.env 的 ADMIN_PASSWORD 提供
+    # （.env.example 中的 123456 仅为示例占位；真实部署务必改为强密码）
     admin_username: str = "pjs"
-    admin_password: str = "123456"
+    admin_password: str = ""
 
     # 允许跨域访问的前端地址（开发用 Vite）
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
