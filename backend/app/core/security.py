@@ -1,6 +1,8 @@
-"""安全模块：密码哈希(argon2) + JWT 令牌签发/校验。"""
+"""安全模块：密码哈希(argon2) + JWT 令牌签发/校验 + 密码强度校验。"""
 
 import datetime as dt
+import re
+import secrets
 from typing import Any
 
 import jwt
@@ -13,6 +15,37 @@ from app.core.config import settings
 _ph = PasswordHasher()
 
 ALGORITHM = "HS256"
+
+# 常见弱密码黑名单（来自历年泄露数据的高频密码，注册/改密直接拒绝）
+_WEAK_PASSWORDS = {
+    "12345678", "123456789", "1234567890", "password", "password1", "qwerty123",
+    "qwertyui", "11111111", "00000000", "abc12345", "abcd1234", "123123123",
+    "admin123", "administrator", "a12345678", "passw0rd", "iloveyou", "sunshine",
+    "qazwsxedc", "1qaz2wsx",
+}
+
+
+def validate_password_strength(password: str, username: str = "") -> tuple[bool, str]:
+    """校验密码强度，返回 (是否合格, 不合格原因)。
+
+    规则（注册与修改密码共用，保证全站一致）：
+      1. 长度 8-64 位
+      2. 必须同时包含字母和数字（杜绝纯 1、纯字母）
+      3. 不能是常见弱密码
+      4. 不能包含用户名（防止 用户名+123 这种偷懒组合）
+    """
+    if not password or len(password) < 8:
+        return False, "密码至少需要 8 位"
+    if len(password) > 64:
+        return False, "密码最长 64 位"
+    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        return False, "密码必须同时包含字母和数字"
+    if password.lower() in _WEAK_PASSWORDS:
+        return False, "这个密码太常见了，容易被猜中，请换一个"
+    if username and len(username) >= 4 and username.lower() in password.lower():
+        return False, "密码不能包含用户名，请换一个"
+
+    return True, ""
 
 
 def hash_password(plain: str) -> str:
@@ -29,12 +62,17 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def _create_token(user_id: int, role: str, token_type: str, expires_delta: dt.timedelta) -> str:
-    """签发 JWT：包含用户 id、角色、令牌类型与过期时间。"""
+    """签发 JWT：包含用户 id、角色、令牌类型与过期时间。
+
+    带 jti 随机编号：即使同一用户在同一秒内签两次，令牌内容也绝不重复
+    （refresh 令牌在库中按哈希唯一存储，重复会造成写入冲突）。
+    """
     now = dt.datetime.now(dt.timezone.utc)
     payload: dict[str, Any] = {
         "sub": str(user_id),          # 主题：用户 id
         "role": role,                 # 角色：admin / user
         "type": token_type,           # 令牌类型：access / refresh
+        "jti": secrets.token_hex(16),  # 唯一编号：保证令牌永不重复
         "iat": now,                   # 签发时间
         "exp": now + expires_delta,   # 过期时间
     }

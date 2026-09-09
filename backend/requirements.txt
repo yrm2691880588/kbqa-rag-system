@@ -21,3 +21,6 @@ openpyxl>=3.1.0                # 解析 Excel(.xlsx)
 beautifulsoup4>=4.12.0         # 解析网页 HTML
 markdown>=3.6                  # Markdown 转纯文本
 aiofiles>=23.2.0               # 异步读写上传文件
+
+# ===== M3.5：账号安全加固（图形验证码/手机号登录）=====
+pillow>=10.0.0                 # 生成人机图形验证码图片

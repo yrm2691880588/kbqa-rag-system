@@ -23,6 +23,7 @@
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { checkPassword } from '@/utils/password'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean] }>()
@@ -37,11 +38,24 @@ const formRef = ref<FormInstance>()
 const loading = ref(false)
 const form = reactive({ old_password: '', new_password: '', confirm: '' })
 
+// 新密码强度即时反馈
+const strengthText = computed(() => checkPassword(form.new_password, auth.user?.username || '').reason)
+const strengthColor = computed(() =>
+  checkPassword(form.new_password, auth.user?.username || '').ok ? '#67c23a' : '#f56c6c',
+)
+
 const rules: FormRules = {
   old_password: [{ required: true, message: '请输入旧密码', trigger: 'blur' }],
   new_password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, message: '新密码至少 6 位', trigger: 'blur' },
+    {
+      validator: (_r, v: string, cb) => {
+        const c = checkPassword(v || '', auth.user?.username || '')
+        if (!c.ok) cb(new Error(c.reason))
+        else cb()
+      },
+      trigger: 'blur',
+    },
   ],
   confirm: [
     { required: true, message: '请再次输入新密码', trigger: 'blur' },
@@ -72,3 +86,11 @@ async function submit() {
   }
 }
 </script>
+
+<style scoped>
+.strength-hint {
+  font-size: 12px;
+  line-height: 1;
+  margin-top: 4px;
+}
+</style>

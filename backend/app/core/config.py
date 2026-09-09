@@ -82,6 +82,18 @@ class Settings(BaseSettings):
     llm_mock: bool = False              # 压测专用：True 时不调 DeepSeek，改发本地模拟流式回答
     #                                # （省测试费用；检索/去噪等真实逻辑不受影响，仅替换外部模型调用）
 
+    # ===== 登录安全 / 验证码 / 短信（账号体系加固用）=====
+    # 短信供应商：mock=不真发短信，验证码固定 123456（本地测试用）；aliyun=接阿里云短信（上线前配）
+    sms_provider: str = "mock"
+    sms_code_ttl_minutes: int = 5    # 短信验证码有效期（分钟）
+    sms_cooldown_seconds: int = 60   # 同一手机号重发间隔（防短信轰炸）
+    sms_daily_limit: int = 10        # 同一手机号每天最多发几条
+    captcha_ttl_minutes: int = 5     # 图形验证码有效期（分钟）
+    register_max_per_ip_hour: int = 3  # 同一 IP 一小时内最多注册几个账号（防批量刷号）
+    login_fail_lock_count: int = 5     # 同一账号连续输错 N 次就临时锁定（防撞库）
+    login_fail_lock_minutes: int = 15  # 账号锁定时长（分钟）
+    login_ip_fail_limit: int = 20      # 同一 IP 15 分钟内累计输错 N 次也锁定（防脚本扫号）
+
     @property
     def is_sqlite(self) -> bool:
         """判断当前是否 SQLite 模式（决定连接参数差异）。"""

@@ -16,6 +16,10 @@ venv/
 node_modules/
 dist/
 *.local
+*.tsbuildinfo
+# vue-tsc 把 vite.config.ts 编译出的中间产物（源码才是本体）
+vite.config.js
+vite.config.d.ts
 
 # 本地数据与日志
 backend/data/

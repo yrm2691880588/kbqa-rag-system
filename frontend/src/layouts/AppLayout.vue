@@ -47,18 +47,23 @@
 
   <!-- 修改密码弹窗 -->
   <ChangePasswordDialog v-model="showPasswordDialog" />
+  <!-- 绑定手机号弹窗 -->
+  <BindPhoneDialog v-model="showBindPhoneDialog" />
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import { Iphone } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
+import BindPhoneDialog from '@/components/BindPhoneDialog.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
 const showPasswordDialog = ref(false)
+const showBindPhoneDialog = ref(false)
 
 // 显示名优先用昵称，没填昵称就用用户名
 const displayName = computed(() => auth.user?.nickname || auth.user?.username || '')
@@ -67,6 +72,8 @@ const avatarText = computed(() => displayName.value.slice(0, 1).toUpperCase() ||
 function onUserCommand(cmd: string) {
   if (cmd === 'password') {
     showPasswordDialog.value = true
+  } else if (cmd === 'bindphone') {
+    showBindPhoneDialog.value = true
   } else if (cmd === 'logout') {
     ElMessageBox.confirm('确定要退出登录吗？', '提示', { type: 'warning' })
       .then(async () => {
@@ -124,6 +131,10 @@ function onUserCommand(cmd: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #303133;
+}
+
+.phone-tag {
+  margin-left: 6px;
 }
 
 .main {

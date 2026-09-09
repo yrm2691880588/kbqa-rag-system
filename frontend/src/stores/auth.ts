@@ -12,6 +12,7 @@ export interface UserInfo {
   nickname: string
   role: 'admin' | 'user'
   is_active: boolean
+  phone?: string | null
   created_at: string
   last_login_at?: string | null
 }
@@ -48,8 +49,24 @@ export const useAuthStore = defineStore('auth', () => {
   // 登录成功后保存令牌 + 用户信息
   async function login(username: string, password: string) {
     const data = await authApi.login(username, password)
+    applyLogin(data)
+  }
+
+  // 手机号 + 短信验证码 登录（没注册过的号码会自动创建账号）
+  async function loginBySms(phone: string, code: string) {
+    const data = await authApi.smsLogin(phone, code)
+    applyLogin(data)
+  }
+
+  // 通用：把后端返回的令牌和用户信息落本地
+  function applyLogin(data: authApi.TokenPair) {
     saveTokens({ access_token: data.access_token, refresh_token: data.refresh_token })
     user.value = data.user
+  }
+
+  // 是否已绑定手机号（绑定后可用手机号验证码登录）
+  function isPhoneBound() {
+    return !!user.value?.phone
   }
 
   // 拉取当前用户信息（页面刷新后恢复登录态用）
@@ -102,6 +119,9 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     accessToken,
     login,
+    loginBySms,
+    applyLogin,
+    isPhoneBound,
     fetchMe,
     refresh,
     logout,
