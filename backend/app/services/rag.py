@@ -90,6 +90,35 @@ def build_messages(question: str, history: list[dict], citations: list[dict]) ->
     return messages
 
 
+def _mock_llm_answer(question: str, citations: list[dict]) -> str:
+    """压测专用：用本地拼接代替 DeepSeek 生成回答（不联网、不花钱）。
+
+    仅当 settings.llm_mock=True 时被调用。回答内容基于检索命中片段拼一段
+    结构化的假答案，保证 SSE 流式链路（分片、引用角标、done 事件）完整走通。
+    """
+    lines = [f"根据知识库资料，关于「{question[:30]}」的模拟回答如下：", ""]
+    for c in citations:
+        snippet = (c.get("text") or "").strip().replace("\n", " ")[:60]
+        lines.append(f"[{c['index']}] {snippet}（来源：{c.get('doc_name', '')}）")
+    lines.append("")
+    lines.append("（以上为压测模式下的本地模拟回答，未调用真实大模型。）")
+    return "\n".join(lines)
+
+
+async def _stream_mock_answer(question: str, citations: list[dict]):
+    """压测专用：把模拟回答按小片逐段 yield，模拟真实流式输出节奏。
+
+    Yields 与真实回答相同的事件结构：
+    ("thinking", ...) → 多个 ("answer", ...) 增量 → ("done", ...)
+    """
+    yield ("thinking", {"text": "正在检索知识库并组织回答…"})
+    mock_text = _mock_llm_answer(question, citations)
+    # 按 8 字左右一小片切分，模拟真实 token 流（让前端打字机效果与 SSE 压力真实）
+    step = 8
+    for i in range(0, len(mock_text), step):
+        yield ("answer", {"text": mock_text[i : i + step]})
+
+
 async def stream_answer(
     question: str,
     history: list[dict],
@@ -143,7 +172,18 @@ async def stream_answer(
         # 2) 有命中 → 先发引用清单（前端据此渲染角标 & 引用抽屉）
         yield ("meta", {"citations": citations})
 
-        # 3) 组装消息，流式调模型
+        # 3) 组装消息，流式调模型（压测模式下走本地模拟流，不联网不花钱）
+        if settings.llm_mock:
+            async for evt, data in _stream_mock_answer(question, citations):
+                yield evt, data
+            yield ("done", {
+                "latency_ms": int((time.time() - started) * 1000),
+                "citations": citations,
+                "has_answer": True,
+                "mock": True,
+            })
+            return
+
         messages = build_messages(question, history, citations)
         llm = client or _get_llm_client()
         stream = await llm.chat.completions.create(

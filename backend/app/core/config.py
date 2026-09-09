@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     llm_max_history_rounds: int = 8     # 多轮对话中最多携带几轮历史进上下文
     llm_max_tokens: int = 2048          # 单次回答最大输出长度
     llm_stream: bool = True             # 默认流式输出
+    llm_mock: bool = False              # 压测专用：True 时不调 DeepSeek，改发本地模拟流式回答
+    #                                # （省测试费用；检索/去噪等真实逻辑不受影响，仅替换外部模型调用）
 
     @property
     def is_sqlite(self) -> bool:
