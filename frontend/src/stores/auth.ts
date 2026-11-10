@@ -1,10 +1,22 @@
 // 用户登录状态管理（Pinia）
+//
+// 【安全改造】令牌不再存 localStorage
+// ------------------------------------------------
+// 原来：登录后把 access_token / refresh_token 存进 localStorage。
+//   问题：localStorage 任何 JS 都读得到。页面上只要有一处 XSS
+//   （比如某个 v-html 渲染了用户可控内容），攻击者一行代码就能把令牌偷走，
+//   然后拿你的账号去提问、烧额度，直到令牌过期。
+//
+// 现在：令牌由后端写进 **HttpOnly Cookie**。
+//   - 浏览器每次请求自动携带，但 JS 完全读不到（document.cookie 里没有）；
+//   - 即使有 XSS，也偷不走令牌原文。
+//
+// 因此前端这边**不再保存令牌**，只保存"当前用户信息"用于界面显示。
+// "是否已登录"的判定也变了：不再看本地有没有 token，而是看
+// 能不能成功请求到 /users/me（后端用 Cookie 判定）。
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as authApi from '@/api/auth'
-
-// 本地存储键：把令牌持久化，刷新页面不丢登录
-const TOKEN_KEY = 'kbqa_tokens'
 
 export interface UserInfo {
   id: number
@@ -21,41 +33,27 @@ export interface UserInfo {
   last_login_at?: string | null
 }
 
-interface Tokens {
-  access_token: string
-  refresh_token: string
-}
-
-function loadTokens(): Tokens | null {
-  const raw = localStorage.getItem(TOKEN_KEY)
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as Tokens
-  } catch {
-    return null
-  }
-}
-
 export const useAuthStore = defineStore('auth', () => {
-  const tokens = ref<Tokens | null>(loadTokens())
   const user = ref<UserInfo | null>(null)
+  /** 是否已经尝试过恢复登录态（避免路由守卫在恢复完成前就判定"未登录"） */
+  const restored = ref(false)
 
-  // 访问令牌（路由守卫判断"是否已登录"用；有 token 才等于已登录）
-  // 【修复】之前路由守卫里用 auth.accessToken 但这里从未暴露过该属性，
-  // 导致守卫永远认为"未登录"，登录后跳转 /chat 总被弹回 /login。
-  const accessToken = computed(() => tokens.value?.access_token || '')
+  // 是否已登录：以"后端认可的用户信息"为准（Cookie 由后端校验）
+  const isLoggedIn = computed(() => !!user.value)
+  // 兼容旧代码里对 accessToken 的判断（现在没有明文令牌可读，只用来说明"已登录"）
+  const accessToken = computed(() => (user.value ? 'cookie-based' : ''))
 
   // 是否平台超管（能建组织、能看所有组织）——决定侧边栏要不要出现"组织管理"
   const isSuperadmin = computed(() => !!user.value?.is_superadmin)
   // 是否是管理员（含平台超管）：能进知识库管理页
   const isAdmin = computed(() => user.value?.role === 'admin' || isSuperadmin.value)
 
-  function saveTokens(t: Tokens) {
-    tokens.value = t
-    localStorage.setItem(TOKEN_KEY, JSON.stringify(t))
+  // 登录成功后只需保存用户信息（令牌已在 Cookie 里，前端拿不到也不需要）
+  function applyLogin(data: authApi.TokenPair) {
+    user.value = data.user
+    restored.value = true
   }
 
-  // 登录成功后保存令牌 + 用户信息
   async function login(username: string, password: string) {
     const data = await authApi.login(username, password)
     applyLogin(data)
@@ -65,12 +63,6 @@ export const useAuthStore = defineStore('auth', () => {
   async function loginBySms(phone: string, code: string) {
     const data = await authApi.smsLogin(phone, code)
     applyLogin(data)
-  }
-
-  // 通用：把后端返回的令牌和用户信息落本地
-  function applyLogin(data: authApi.TokenPair) {
-    saveTokens({ access_token: data.access_token, refresh_token: data.refresh_token })
-    user.value = data.user
   }
 
   // 是否已绑定手机号（绑定后可用手机号验证码登录）
@@ -85,12 +77,30 @@ export const useAuthStore = defineStore('auth', () => {
     return me
   }
 
-  // 用刷新令牌换新令牌（访问令牌过期后静默续期）
-  async function refresh(): Promise<boolean> {
-    if (!tokens.value?.refresh_token) return false
+  /**
+   * 页面刷新后恢复登录态。
+   * 有 Cookie 就能成功拿到用户信息；没有则视为未登录（不抛错）。
+   */
+  async function restoreSession(): Promise<boolean> {
     try {
-      const data = await authApi.refresh(tokens.value.refresh_token)
-      saveTokens({ access_token: data.access_token, refresh_token: data.refresh_token })
+      await fetchMe()
+      return true
+    } catch {
+      user.value = null
+      return false
+    } finally {
+      restored.value = true
+    }
+  }
+
+  /**
+   * 用刷新令牌换新令牌。
+   * 刷新令牌在 HttpOnly Cookie 里，前端读不到，所以这里不传参数，
+   * 由浏览器自动带上 Cookie；后端换完会重新种 Cookie。
+   */
+  async function refresh(): Promise<boolean> {
+    try {
+      const data = await authApi.refresh()
       user.value = data.user
       return true
     } catch {
@@ -98,17 +108,14 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 退出登录：通知后端作废令牌并清空本地
+  // 退出登录：通知后端作废令牌并清 Cookie，然后清空本地用户信息
   async function logout() {
-    const rt = tokens.value?.refresh_token
-    clear()
-    if (rt) {
-      try {
-        await authApi.logout(rt)
-      } catch {
-        /* 忽略网络异常，本地已登出 */
-      }
+    try {
+      await authApi.logout()
+    } catch {
+      /* 忽略网络异常，本地仍然要登出 */
     }
+    clear()
   }
 
   // 修改密码（后端已验证旧密码）
@@ -116,17 +123,16 @@ export const useAuthStore = defineStore('auth', () => {
     return authApi.changePassword(oldPassword, newPassword)
   }
 
-  // 清空本地登录态
+  // 清空本地登录态（Cookie 由后端清除）
   function clear() {
-    tokens.value = null
     user.value = null
-    localStorage.removeItem(TOKEN_KEY)
   }
 
   return {
-    tokens,
     user,
+    restored,
     accessToken,
+    isLoggedIn,
     isSuperadmin,
     isAdmin,
     login,
@@ -134,6 +140,7 @@ export const useAuthStore = defineStore('auth', () => {
     applyLogin,
     isPhoneBound,
     fetchMe,
+    restoreSession,
     refresh,
     logout,
     changePassword,

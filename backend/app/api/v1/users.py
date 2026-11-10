@@ -214,12 +214,27 @@ async def admin_reset_password(user_id: int, current_user: AdminUser, db: DbSess
     # 随机临时密码：字母 + 数字，长度 12，保证能过强度校验
     alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ"
     digits = "23456789"
-    raw = (
-        "".join(secrets.choice(alphabet) for _ in range(8))
-        + "".join(secrets.choice(digits) for _ in range(4))
-    )
-    # 打乱顺序，避免"字母全在前"这种可猜的结构
-    temp_password = "".join(secrets.choice(list(raw)) for _ in range(len(raw)))
+
+    def _make() -> str:
+        raw = (
+            "".join(secrets.choice(alphabet) for _ in range(8))
+            + "".join(secrets.choice(digits) for _ in range(4))
+        )
+        # 打乱顺序，避免"字母全在前"这种可猜的结构
+        return "".join(secrets.choice(list(raw)) for _ in range(len(raw)))
+
+    # ⚠️ 必须重试到"能过全站密码强度校验"为止。
+    # 为什么不能只生成一次：强度规则里有一条"密码不能包含用户名"，
+    # 而随机串恰好拼出用户名（如用户名 alice、密码里含 alice）是有概率的。
+    # 一旦命中，管理员交出去的临时密码用户根本改不了密码——
+    # 会被自己的临时密码卡住，只能再找管理员重置一次。
+    # 生成出来的密码必须保证使用者能直接用，所以这里循环到合规为止。
+    temp_password = _make()
+    for _ in range(50):
+        ok, _reason = validate_password_strength(temp_password, target.username)
+        if ok:
+            break
+        temp_password = _make()
 
     target.password_hash = hash_password(temp_password)
     await db.execute(

@@ -64,17 +64,27 @@ const router = createRouter({
 })
 
 // 全局前置守卫：控制"未登录/非管理员"是否能进入页面
+//
+// 【安全改造后的关键变化】
+// 以前判断"是否已登录"看的是 localStorage 里有没有 token。
+// 现在令牌在 HttpOnly Cookie 里，JS 读不到，所以不能再这样判断。
+// 改为：首次进入时向后端问一次 /users/me —— 有 Cookie 就成功，没有就 401。
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
+  // 0) 首次导航时先恢复登录态（只做一次，后续用内存里的 user）
+  if (!auth.restored) {
+    await auth.restoreSession()
+  }
+
   // 1) 页面明确允许游客访问（登录/注册页）且已登录时，直接送去主页
   if (to.meta.public) {
-    if (auth.accessToken) return '/chat'
+    if (auth.isLoggedIn) return '/chat'
     return true
   }
 
   // 2) 未登录 → 一律跳登录页（并记录想去的地址，登录后跳回）
-  if (!auth.accessToken) {
+  if (!auth.isLoggedIn) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
 

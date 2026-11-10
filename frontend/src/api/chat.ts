@@ -1,6 +1,6 @@
 // 会话与问答 API（M3）：会话 CRUD + 历史消息 + SSE 流式问答
+// 注：令牌已改为 HttpOnly Cookie，前端不再需要读取令牌，故不引入 auth store。
 import http from './http'
-import { useAuthStore } from '@/stores/auth'
 
 export interface ChatSession {
   id: number
@@ -95,15 +95,17 @@ export function streamChat(
   onError: (msg: string) => void,
   onComplete: () => void = () => {},
 ): AbortController {
-  const auth = useAuthStore()
-  const token = auth.tokens?.access_token
   const controller = new AbortController()
 
+  // 【安全改造】不再手工拼 Authorization 头。
+  // 令牌在 HttpOnly Cookie 里，fetch 同源请求会自动携带。
+  // credentials: 'include' 是为了兼容前后端不同源部署的场景；
+  // 同源时它等同于默认行为，没有副作用。
   fetch(`/api/v1/chat`, {
     method: 'POST',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ session_id: sessionId, question }),
     signal: controller.signal,

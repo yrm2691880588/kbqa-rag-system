@@ -104,12 +104,22 @@ export function resetPassword(phone: string, code: string, newPassword: string) 
     .then((r) => r.data)
 }
 
-export function refresh(refresh_token: string) {
-  return http.post<TokenPair>('/auth/refresh', { refresh_token }).then((r) => r.data)
+/**
+ * 刷新令牌。
+ * 令牌在 HttpOnly Cookie 里，JS 读不到，所以这里不传参数 ——
+ * 浏览器会自动带上 Cookie，后端换完会重新种一份。
+ * （脚本/第三方仍可通过请求体传 refresh_token，后端两种都支持。）
+ */
+export function refresh() {
+  return http.post<TokenPair>('/auth/refresh', {}).then((r) => r.data)
 }
 
-export function logout(refresh_token: string) {
-  return http.post('/auth/logout', { refresh_token })
+/**
+ * 退出登录。
+ * 同上：不需要显式传 refresh_token，后端从 Cookie 取并清除它。
+ */
+export function logout() {
+  return http.post('/auth/logout', {})
 }
 
 export function getMe() {

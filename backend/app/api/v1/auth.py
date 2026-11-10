@@ -11,10 +11,15 @@ import datetime as dt
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth_cookies import (
+    clear_auth_cookies,
+    get_refresh_token,
+    set_auth_cookies,
+)
 from app.core.config import settings
 from app.core.deps import DbSession, login_rate_limiter, sha256_hex
 from app.core.security import (
@@ -189,7 +194,13 @@ async def _resolve_org_for_register(db: DbSession, invite_code: str) -> int | No
 # ============ 账号密码登录（防撞库）============
 
 @router.post("/login", response_model=TokenPair)
-async def login(payload: LoginRequest, request: Request, db: DbSession, _: None = Depends(login_rate_limiter)):
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+    _: None = Depends(login_rate_limiter),
+):
     """账号密码登录：失败锁定 + 成功签发双令牌。"""
     ip = _client_ip(request)
     username = payload.username.strip()
@@ -209,7 +220,10 @@ async def login(payload: LoginRequest, request: Request, db: DbSession, _: None 
 
     # 登录成功：清零该账号的失败记录
     await auth_guard.clear_login_failures(db, username)
-    return await _issue_tokens(db, user)
+    pair = await _issue_tokens(db, user)
+    # 同时写进 HttpOnly Cookie（浏览器端用）并返回体里也带一份（脚本/兼容用）
+    set_auth_cookies(response, pair.access_token, pair.refresh_token)
+    return pair
 
 
 # ============ 短信验证码：发送 ============
@@ -231,7 +245,12 @@ async def sms_send(payload: SmsSendRequest, request: Request, db: DbSession, _: 
 # ============ 短信验证码：登录 / 自动注册 ============
 
 @router.post("/sms/login", response_model=TokenPair)
-async def sms_login(payload: SmsLoginRequest, db: DbSession, _: None = Depends(login_rate_limiter)):
+async def sms_login(
+    payload: SmsLoginRequest,
+    response: Response,
+    db: DbSession,
+    _: None = Depends(login_rate_limiter),
+):
     """手机号 + 短信验证码 登录。
 
     该手机号已绑定账号 → 直接登录该账号；
@@ -264,7 +283,9 @@ async def sms_login(payload: SmsLoginRequest, db: DbSession, _: None = Depends(l
     elif not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "账号已被禁用，请联系管理员")
 
-    return await _issue_tokens(db, user)
+    pair = await _issue_tokens(db, user)
+    set_auth_cookies(response, pair.access_token, pair.refresh_token)
+    return pair
 
 
 # ============ 忘记密码 / 重置密码 ============
@@ -360,8 +381,15 @@ async def reset_password(
 
 # ============ 刷新令牌 / 登出 ============
 
-async def _rotate_refresh(db: AsyncSession, refresh_token: str) -> tuple[str, str]:
-    """校验刷新令牌 → 作废旧令牌 → 发一对新令牌（令牌轮换，更安全）。"""
+async def _rotate_refresh(db: AsyncSession, refresh_token: str | None) -> tuple[str, str]:
+    """校验刷新令牌 → 作废旧令牌 → 发一对新令牌（令牌轮换，更安全）。
+
+    refresh_token 允许为 None（改用 Cookie 后，浏览器端请求体里没有它）：
+    这种情况直接判为"未登录"，给一句明确的提示，
+    而不是让 decode_token 抛一个看不懂的内部错误。
+    """
+    if not refresh_token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "未找到登录凭证，请重新登录")
     try:
         payload = decode_token(refresh_token, expected_type="refresh")
     except TokenError as exc:
@@ -373,7 +401,16 @@ async def _rotate_refresh(db: AsyncSession, refresh_token: str) -> tuple[str, st
 
     if record is None or record.revoked or record.user_id != user_id:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已失效，请重新登录")
-    if record.expires_at < dt.datetime.now(dt.timezone.utc):
+    # ⚠️ 时区归一化后再比较。
+    # 数据库字段是 timezone=True，PostgreSQL 读回来是 aware datetime，
+    # 但 SQLite（本地开发/CI 用的内存库）不支持时区，读回来是 naive。
+    # 直接拿 naive 和 aware 的 now() 比较会抛
+    # TypeError: can't compare offset-naive and offset-aware datetimes，
+    # 表现为"刷新令牌直接 500"。这里统一成 aware 再比。
+    expires_at = record.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=dt.timezone.utc)
+    if expires_at is not None and expires_at < dt.datetime.now(dt.timezone.utc):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "登录已过期，请重新登录")
 
     # 作废旧令牌（防重放），签发新的一对
@@ -396,11 +433,18 @@ async def _rotate_refresh(db: AsyncSession, refresh_token: str) -> tuple[str, st
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(payload: RefreshRequest, db: DbSession):
-    """访问令牌过期后，用刷新令牌静默换新，用户无需重新输密码。"""
-    access_token, new_refresh = await _rotate_refresh(db, payload.refresh_token)
+async def refresh(payload: RefreshRequest, request: Request, response: Response, db: DbSession):
+    """访问令牌过期后，用刷新令牌静默换新，用户无需重新输密码。
+
+    刷新令牌来源：优先 HttpOnly Cookie（浏览器端），
+    回退到请求体（脚本/压测工具用它，没有 Cookie 环境）。
+    """
+    raw_refresh = get_refresh_token(request) or payload.refresh_token
+    access_token, new_refresh = await _rotate_refresh(db, raw_refresh)
     user_id = int(decode_token(access_token, expected_type="access")["sub"])
     user = await db.get(User, user_id)
+    # 换新令牌后同步刷新 Cookie（否则浏览器里还是旧的，下次又要刷）
+    set_auth_cookies(response, access_token, new_refresh)
     return TokenPair(
         access_token=access_token,
         refresh_token=new_refresh,
@@ -409,11 +453,24 @@ async def refresh(payload: RefreshRequest, db: DbSession):
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(payload: LogoutRequest, db: DbSession):
-    """退出登录：把该刷新令牌作废，此后无法再换新令牌。"""
-    record = await db.scalar(
-        select(RefreshToken).where(RefreshToken.token_hash == sha256_hex(payload.refresh_token))
-    )
-    if record is not None:
-        record.revoked = True
-        await db.commit()
+async def logout(
+    payload: LogoutRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+):
+    """退出登录：作废刷新令牌 + 清除 Cookie。
+
+    刷新令牌来源同 refresh：优先 Cookie，回退请求体。
+    即使没有可作废的记录（比如令牌本来就过期了），也要清 Cookie ——
+    否则用户点了"退出"，浏览器里还留着令牌，实际并没退出去。
+    """
+    raw_refresh = get_refresh_token(request) or payload.refresh_token
+    if raw_refresh:
+        record = await db.scalar(
+            select(RefreshToken).where(RefreshToken.token_hash == sha256_hex(raw_refresh))
+        )
+        if record is not None:
+            record.revoked = True
+            await db.commit()
+    clear_auth_cookies(response)

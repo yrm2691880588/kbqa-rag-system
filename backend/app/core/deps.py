@@ -6,15 +6,15 @@ from collections import defaultdict, deque
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth_cookies import get_access_token
 from app.core.security import TokenError, decode_token
 from app.db.session import get_db
 from app.models.user import User
 
-# Bearer 令牌认证（前端在请求头带 Authorization: Bearer <token>）
-_bearer = HTTPBearer(auto_error=False)
+# 令牌来源已移到 app/core/auth_cookies.py 统一处理
+# （优先 HttpOnly Cookie，回退 Authorization 头）
 
 # 简单的登录防爆破：记录每个 IP 最近 1 分钟内的登录尝试次数（内存实现）
 _login_attempts: dict[str, deque[float]] = defaultdict(deque)
@@ -38,16 +38,25 @@ def sha256_hex(text: str) -> str:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """解析请求头里的访问令牌 → 查出对应用户；无效则 401。"""
-    if credentials is None:
+    """解析访问令牌 → 查出对应用户；无效则 401。
+
+    令牌来源（按优先级）：
+        ① HttpOnly Cookie —— 浏览器端用这个，JS 读不到，XSS 偷不走；
+        ② Authorization: Bearer <token> —— 命令行/脚本/第三方调用方用这个。
+
+    两种都支持是刻意的：安全上浏览器走 Cookie，兼容上保留 Bearer，
+    两者校验逻辑完全一样（同一套 decode_token）。
+    """
+    token = get_access_token(request)
+    if not token:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "未登录或登录已过期", headers={"WWW-Authenticate": "Bearer"}
         )
     try:
-        payload = decode_token(credentials.credentials, expected_type="access")
+        payload = decode_token(token, expected_type="access")
     except TokenError as exc:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, str(exc), headers={"WWW-Authenticate": "Bearer"}

@@ -9,14 +9,11 @@ const http = axios.create({
   timeout: 60000, // 长请求（如上传/问答）60 秒超时
 })
 
-// 请求拦截：有令牌就自动带上 Authorization 头
-http.interceptors.request.use((config) => {
-  const auth = useAuthStore()
-  if (auth.tokens?.access_token) {
-    config.headers.Authorization = `Bearer ${auth.tokens.access_token}`
-  }
-  return config
-})
+// 【安全改造】不再手工加 Authorization 头。
+// 令牌在 HttpOnly Cookie 里，浏览器会自动随请求发送（同源即自动带上）。
+// withCredentials 打开是为了兼容"前后端不同源部署"的场景
+// （此时需要后端 CORS 允许凭据，项目已配置 allow_credentials=True）。
+http.defaults.withCredentials = true
 
 // 是否正在刷新令牌（防止多个 401 同时触发多次刷新）
 let refreshing = false
@@ -35,8 +32,10 @@ http.interceptors.response.use(
     const auth = useAuthStore()
     const original = error.config as (InternalAxiosRequestConfig & { _retried?: boolean }) | undefined
 
-    // 只有"访问令牌过期"(401) 且该请求还没重试过时，才尝试续期
-    if (error.response?.status === 401 && original && !original._retried && auth.tokens?.refresh_token) {
+    // 只有"访问令牌过期"(401) 且该请求还没重试过时，才尝试续期。
+    // 注意：这里不再判断"本地有没有 refresh_token"——令牌在 Cookie 里，
+    // 前端读不到。刷新能否成功完全由后端判断（Cookie 里的刷新令牌是否有效）。
+    if (error.response?.status === 401 && original && !original._retried) {
       if (refreshing) {
         // 已有请求在刷新：排队等它完成再重放
         return new Promise((resolve, reject) => {
@@ -54,7 +53,9 @@ http.interceptors.response.use(
         return http(original) // 换到新令牌后重试原请求
       }
       auth.clear()
-      window.location.href = '/login' // 刷新也失败 → 回登录页
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login' // 刷新也失败 → 回登录页
+      }
     }
 
     // 业务错误信息展示（后端返回的 detail 是中文提示）
