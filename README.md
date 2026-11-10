@@ -214,6 +214,18 @@ cd backend
 
 ---
 
+## 🤝 参与贡献
+
+本项目主要用于学习与交流，欢迎提 Issue 讨论。提交代码前请先看
+[docs/README.md](docs/README.md) 了解项目结构与约定。
+
+如果发现安全问题，请**不要**公开提 Issue，处理方式见 [SECURITY.md](.github/SECURITY.md)。
+
+---
+
 ## 📄 License
 
-个人学习 / 求职展示项目，保留所有权利。
+本项目基于 **MIT 许可证**开源，详见 [LICENSE](LICENSE)。
+
+你可以自由使用、修改、分发本项目代码，包括商业用途，只需保留原始的版权声明。
+

@@ -37,3 +37,35 @@ Thumbs.db
 
 # WorkBuddy 私有数据(工作日志/记忆,含隐私,不入库)
 .workbuddy/
+
+# ===== 私人规则体系：绝不提交 =====
+# AGENTS.md 与 .agent-rules/ 是本地工作规则，含个人习惯与隐私约定，
+# 属于「配置自己的 AI 怎么干活」，与项目本身无关，公开无意义且有隐私风险。
+AGENTS.md
+.agent-rules/
+# 其他 AI 工具可能生成的本地规则文件
+CLAUDE.md
+GEMINI.md
+.cursor/
+.codex/
+.copilot/
+
+# ===== 压测资料：含真实登录令牌与个人路径，绝不提交 =====
+# token_pool.json 里是压测时抓的真实 JWT，虽已过期但会暴露内部用户编号体系；
+# 压测 CSV 含接口明细与账号信息；脚本里写死了本机桌面路径。
+KBQA-RAG项目资料（压力测试）/
+token_pool.json
+*.jwt
+
+# ===== 一次性验证脚本：含清库逻辑与本机路径 =====
+# 这些是开发期临时自检脚本(下划线开头)，不是正式测试，且常写死本机路径。
+# 正式测试是 test_*.py，不受影响。
+backend/tests/_verify_*
+backend/tests/_mutation_check_*
+
+# ===== 构建与运行产物 =====
+build-logs/
+*.csv
+!requirements*.csv
+# 临时脚本目录（一次性维护脚本、试验性代码）
+tmp/
