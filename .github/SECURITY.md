@@ -5,10 +5,13 @@
 如果你发现本项目存在安全漏洞（例如密钥泄露、越权访问、SQL 注入、XSS 等），
 **请不要在 GitHub 上公开提交 Issue**，那会让漏洞在修复前被所有人看到。
 
-请通过以下方式私下告知：
+请通过 GitHub 的**私密漏洞报告通道**告知：
 
-- 发送邮件至：`<你的邮箱>`
-- 或在 GitHub 上通过 **Security → Advisories → Report a vulnerability** 私下报告
+> 打开本仓库 → 顶部 **Security** 标签 → 左侧 **Advisories** → 点击
+> **Report a vulnerability**
+
+这条通道只有仓库维护者能看到，内容不会公开，也不会出现在 Issue 列表里。
+（不用邮箱，是因为本项目不公开个人联系方式；GitHub 通道足够且更安全。）
 
 请在报告中尽量包含：
 
