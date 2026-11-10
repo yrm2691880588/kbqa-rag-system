@@ -6,7 +6,7 @@
 - chunk_parse_result(result)：把解析结果切成带连续序号的 Chunk 列表
 
 运行方式（在 backend 目录下）：
-    C:\\Users\\pjs\\.venvs\\kbqa\\Scripts\\python.exe -m unittest tests.test_chunker -v
+    python -m unittest tests.test_chunker -v
 """
 import unittest
 

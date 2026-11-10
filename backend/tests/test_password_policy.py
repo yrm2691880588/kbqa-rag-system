@@ -4,7 +4,7 @@
 合规密码（8位+字母数字）放行。
 
 运行方式（backend 目录下）：
-    C:\\Users\\pjs\\.venvs\\kbqa\\Scripts\\python.exe -m unittest tests.test_password_policy -v
+    python -m unittest tests.test_password_policy -v
 """
 import unittest
 import sys
@@ -55,13 +55,13 @@ class TestPasswordStrength(unittest.TestCase):
 
     # ---- 不能包含用户名 ----
     def test_contains_username_rejected(self):
-        # 用户名 pjs123 出现在密码里 → 拒绝
-        self.assert_rejected("pjs123456", "pjs123")
+        # 用户名 alice2024 出现在密码里 → 拒绝
+        self.assert_rejected("alice202456", "alice2024")
         # 用户名够长(≥4)才参与校验
-        self.assert_accepted("pjs123456", "pjs")  # 用户名只有 3 位，不参与
+        self.assert_accepted("alice202456", "abc")  # 用户名只有 3 位，不参与
 
     def test_username_rule_uses_case_insensitive(self):
-        self.assert_rejected("PJS123456", "pjs123")
+        self.assert_rejected("ALICE202456", "alice2024")
 
     # ---- 返回值规范 ----
     def test_reason_is_chinese_hint(self):

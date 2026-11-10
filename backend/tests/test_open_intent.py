@@ -4,7 +4,7 @@
 判定为 True 时，RAG 主流程会在无命中情况下主动列出商品清单。
 
 运行方式（在 backend 目录下）：
-    C:\\Users\\pjs\\.venvs\\kbqa\\Scripts\\python.exe -m unittest tests.test_open_intent -v
+    python -m unittest tests.test_open_intent -v
 """
 import unittest
 

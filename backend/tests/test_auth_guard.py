@@ -3,7 +3,7 @@
 用 SQLite 内存库跑真实数据库逻辑（StaticPool 共享同一连接，保证表存在且数据一致）。
 
 运行方式（backend 目录下）：
-    C:\\Users\\pjs\\.venvs\\kbqa\\Scripts\\python.exe -m unittest tests.test_auth_guard -v
+    python -m unittest tests.test_auth_guard -v
 """
 import asyncio
 import base64

@@ -5,7 +5,7 @@
 与 retrieval_chunks_per_doc（同文档最多保留条数）。
 
 运行方式（在 backend 目录下）：
-    C:\\Users\\pjs\\.venvs\\kbqa\\Scripts\\python.exe -m unittest tests.test_retriever -v
+    python -m unittest tests.test_retriever -v
 """
 import unittest
 

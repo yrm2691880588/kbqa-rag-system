@@ -1,7 +1,7 @@
 """闲聊识别模块单元测试（smalltalk.py）——验证寒暄识别是否可靠、不误伤真问题。
 
 运行方式（在 backend 目录下）：
-    C:\\Users\\pjs\\.venvs\\kbqa\\Scripts\\python.exe -m unittest tests.test_smalltalk -v
+    python -m unittest tests.test_smalltalk -v
 """
 import unittest
 
