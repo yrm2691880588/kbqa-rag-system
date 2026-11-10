@@ -331,5 +331,10 @@ async def stream_answer(
         logger.exception("问答流程异常")
         # 记一次熔断失败：这是"外部服务可能真的挂了"最直接的信号
         ai_guard.llm_breaker.record_failure()
-        yield ("error", {"message": f"回答生成失败：{str(e)[:300]}"})
+        # ⚠️ 只给用户一句通用提示，**不能**把 str(e) 透传出去。
+        # 原因：上游 SDK 的异常文本里常带着 api_key 片段、request_id、
+        # 内部域名、甚至上游文档链接（实测阿里云 401 会带一长串）。
+        # 把这些原样吐给前端，等于把后端配置和供应商信息告诉攻击者。
+        # 真正的排查信息留在日志里（logger.exception 已经记了完整栈）。
+        yield ("error", {"message": "回答生成失败，请稍后重试；如持续失败请联系管理员"})
         yield ("done", {"latency_ms": int((time.time() - started) * 1000), "citations": []})
