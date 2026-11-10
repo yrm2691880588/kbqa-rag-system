@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    description="企业级电商知识库 RAG 问答系统",
+    description="电商知识库 RAG 问答系统",
     version="0.1.0",
     lifespan=lifespan,
     # 接口文档开关：/docs 与 /redoc 是否对外暴露（EXPOSE_DOCS=false 可关闭，减少信息暴露）
