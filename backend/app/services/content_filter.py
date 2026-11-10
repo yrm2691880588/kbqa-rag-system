@@ -57,6 +57,34 @@ def _fullwidth_to_halfwidth(ch: str) -> str:
 _SKIP_CHARS = set(" \t\r\n\u3000") | set("-_*./\\|+~^·.,;:!?()[]{}<>\"'`@#$%&=，。；：！？（）【】《》、…—‘’“”")
 
 
+# 常见繁体字 → 简体字（只收"常被用来绕过审核"的高频字，不是完整繁简表）。
+# 为什么需要：词库存的是简体（如"赌博"），但用户写"賭博"时字符并不相同，
+# 直接比对会漏过去。归一化时先做这一步，繁体写法就能落到简体词条上。
+# 覆盖范围说明：这里只做一对一单字映射，够挡住"换个繁体字写法"这类绕过；
+# 真正的同义词/拼音变体需要语义级判断，不在本模块职责内。
+_TRAD_TO_SIMP = str.maketrans({
+    "賭": "赌", "場": "场", "錢": "钱", "貸": "贷", "貨": "货", "聯": "联",
+    "絡": "络", "詐": "诈", "騙": "骗", "黨": "党", "槍": "枪", "彈": "弹",
+    "藥": "药", "醫": "医", "療": "疗", "雜": "杂", "網": "网",
+    "鏈": "链", "結": "结", "頁": "页", "點": "点", "擊": "击", "進": "进",
+    "買": "买", "賣": "卖", "購": "购", "價": "价", "開": "开", "關": "关",
+    "門": "门", "問": "问", "題": "题", "電": "电", "話": "话", "號": "号",
+    "碼": "码", "掃": "扫", "視": "视", "頻": "频",
+    "遊": "游", "戲": "戏", "娛": "娱", "樂": "乐", "團": "团", "隊": "队",
+    "會": "会", "員": "员", "費": "费", "優": "优", "搶": "抢",
+    "發": "发", "轉": "转", "賬": "账", "戶": "户", "銀": "银",
+    "幣": "币", "虛": "虚", "擬": "拟", "贏": "赢", "輸": "输",
+    "獎": "奖", "財": "财", "寶": "宝", "億": "亿", "萬": "万",
+    "個": "个", "們": "们", "來": "来", "對": "对", "這": "这", "時": "时",
+    "說": "说", "還": "还", "過": "过", "後": "后", "麼": "么", "樣": "样",
+})
+
+
+def _to_simplified(ch: str) -> str:
+    """繁体字转简体（不在映射表里的原样返回）。"""
+    return ch.translate(_TRAD_TO_SIMP)
+
+
 def _build_scan_view(text: str) -> tuple[str, list[int]]:
     """生成用于比对的"归一化文本"，并记录每个字符对应原文的哪个位置。
 
@@ -71,6 +99,7 @@ def _build_scan_view(text: str) -> tuple[str, list[int]]:
         ch = _fullwidth_to_halfwidth(raw)
         if ch in _SKIP_CHARS:
             continue            # 干扰字符不参与比对
+        ch = _to_simplified(ch)   # 繁体归一化成简体，避免「賭博」这类写法绕过
         chars.append(ch.lower())
         positions.append(idx)
     return "".join(chars), positions
@@ -241,17 +270,20 @@ def check(text: str, mask: bool = True) -> FilterResult:
 
     hits: list[FilterHit] = []
     for word, norm, category in zip(wl.words, wl.normalized, wl.categories):
+        # 必须循环找出**每一处**出现，不能只 find 一次。
+        # 早期版本只取第一次出现，导致"加微信加微信"里第二处原样输出 ——
+        # 与"打码时统一处理所有出现位置"的预期相反，等于漏放。
         start = view.find(norm)
-        if start < 0:
-            continue
-        # 同一个词出现多次只记一条（打码时统一处理所有出现位置）
-        end = start + len(norm) - 1
-        hits.append(FilterHit(
-            word=word,
-            category=category,
-            start=positions[start],
-            end=positions[end] + 1,
-        ))
+        while start >= 0:
+            end = start + len(norm) - 1
+            hits.append(FilterHit(
+                word=word,
+                category=category,
+                start=positions[start],
+                end=positions[end] + 1,
+            ))
+            # 从本次命中之后继续找，避免死循环（步长至少 1）
+            start = view.find(norm, start + 1)
 
     if not hits:
         return FilterResult(hit=False, masked=text)
@@ -337,8 +369,6 @@ class StreamGuard:
 # ============================================================
 # 给"用户提问"用的便捷判断
 # ============================================================
-
-_BLANK_RE = re.compile(r"\s+")
 
 
 def is_blocked_question(question: str) -> FilterResult:

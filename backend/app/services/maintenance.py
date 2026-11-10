@@ -364,9 +364,3 @@ async def run_cleanup(
         report.total_deleted, len(report.archived_files), len(report.errors),
     )
     return report
-
-
-def retention_accessors() -> list[tuple[str, str]]:
-    """列出所有保留期配置项（给自检/文档用，避免文档和代码对不上）。"""
-    names = ["log_retention_days", "message_retention_days", "archive_dir"]
-    return [(n, str(getattr(settings, n, ""))) for n in names]

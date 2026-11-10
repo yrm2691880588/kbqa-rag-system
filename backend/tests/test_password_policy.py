@@ -45,7 +45,8 @@ class TestPasswordStrength(unittest.TestCase):
             self.assert_rejected(pw)
 
     def test_mixed_accepted(self):
-        for pw in ["kbqa2026", "A1b2C3d4", "Pjs888888", "abc123XYZ"]:
+        # 用中性示例，避免把个人账号名写进公开仓库
+        for pw in ["kbqa2026", "A1b2C3d4", "Test888888", "abc123XYZ"]:
             self.assert_accepted(pw)
 
     # ---- 常见弱密码黑名单 ----
