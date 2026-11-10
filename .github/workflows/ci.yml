@@ -90,6 +90,57 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      # 依赖漏洞审计。
+      #
+      # ⚠️ 坑一：`npm audit --audit-level=high` **只影响显示内容，不影响退出码**。
+      #   实测：项目里有 high 时它依然返回 0。直接写进 CI 等于摆设。
+      #   所以下面自己解析 JSON 计数、主动 exit 1。
+      #
+      # ⚠️ 坑二：CI 里不能用 /tmp（Windows 本地跑会路径不存在），
+      #   统一写到项目内的临时文件。
+      #
+      # 阈值为什么定在 critical 而不是 high：
+      #   当前唯一的高危项是 vite（dev server 相关的 8 个公告），
+      #   具体包括 server.fs.deny 绕过、launch-editor 命令注入等 ——
+      #   这些**只在 `npm run dev` 起开发服务器时成立**，
+      #   `npm run build` 产出的 dist/ 里根本没有 vite 代码，生产不受影响；
+      #   且多条是 Windows 平台特定。
+      #   修复它需要 vite 5 -> 8 跨两个主版本，回归风险大于实际收益。
+      #   所以 CI 卡 critical；high 只在日志里列出来，提醒开发者知悉。
+      #   等哪天升级了工具链，把这个门槛收紧回 high。
+      - name: 依赖漏洞审计（critical 必须为 0）
+        working-directory: frontend
+        run: |
+          npm audit --json > audit.json || true
+          python3 - <<'PY'
+          import json, sys
+
+          try:
+              data = json.load(open("audit.json"))
+          except Exception as e:
+              print(f"审计结果解析失败：{e}")
+              sys.exit(1)
+
+          meta = data.get("metadata", {}).get("vulnerabilities", {})
+          crit = int(meta.get("critical", 0))
+          high = int(meta.get("high", 0))
+          total = int(meta.get("total", 0))
+          print(f"依赖漏洞统计：共 {total} 个（critical={crit}, high={high}）")
+
+          vulns = data.get("vulnerabilities", {})
+          for sev in ("critical", "high"):
+              names = [n for n, v in vulns.items() if v.get("severity") == sev]
+              if names:
+                  print(f"  {sev}: {', '.join(names)}")
+
+          if crit:
+              print("发现 critical 级漏洞，必须修复后才能合并。")
+              sys.exit(1)
+          if high:
+              print("注意：存在 high 级漏洞（当前为 dev server 相关，不阻塞合并，详见注释）。")
+          print("通过。")
+          PY
+
   # ---------------- 密钥扫描：防止误提交密钥 ----------------
   secret-scan:
     name: 密钥扫描

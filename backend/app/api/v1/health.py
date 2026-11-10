@@ -9,12 +9,49 @@
 状态码约定：健康 → 200；不健康 → 503（监控可直接靠状态码判警，无需解析响应体）。
 """
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.core.deps import AdminUser
 from app.services.health_check import run_checks
 
 router = APIRouter(prefix="/health", tags=["健康检查"])
+
+
+class _SlidingWindowLimiter:
+    """按 key 的滑动窗口限流（进程内内存实现）。
+
+    为什么用滑动窗口而不是"固定每分钟清零"：
+        固定窗口在边界上会放过 2 倍流量（第 59 秒来一批、第 61 秒又来一批，
+        两批都不受限）。滑动窗口记录每次调用的时间戳，任何时刻都严格
+        "最近 N 秒内不超过 M 次"。
+
+    为什么放在进程内：这个端点一天调用不了几次，没必要引入 Redis。
+    多进程部署时每个进程各自计数，实际总量是 N×进程数 —— 对"防误刷"够用。
+    """
+
+    def __init__(self, max_calls: int, window_seconds: float) -> None:
+        self.max_calls = max_calls
+        self.window = window_seconds
+        self._hits: dict[str, list[float]] = {}
+
+    def hit(self, key: str) -> float:
+        """记一次调用。允许则返回 0；超限则返回"还要等几秒"。"""
+        import time
+
+        now = time.monotonic()
+        bucket = self._hits.setdefault(key, [])
+        # 丢掉窗口外的旧记录
+        cutoff = now - self.window
+        while bucket and bucket[0] < cutoff:
+            bucket.pop(0)
+        if len(bucket) >= self.max_calls:
+            return max(0.0, self.window - (now - bucket[0]))
+        bucket.append(now)
+        return 0.0
+
+
+# 深度探活：每人每分钟最多 3 次（每次都会真实调用付费接口）
+_deep_probe_limiter = _SlidingWindowLimiter(max_calls=3, window_seconds=60)
 
 # 不健康时返回的状态码（负载均衡/监控据此摘除流量）
 _UNHEALTHY = 503
@@ -58,7 +95,20 @@ async def deep(
        这个端点会真的去调百炼/DeepSeek 接口，**每次都要花钱**。
        如果它像 /live 那样对所有人开放，任何人都能反复刷它把你的配额烧光。
        真正需要无人值守调用的只有 /live 与 /ready，那两个不碰外部服务，保持匿名。
+
+    ⚠️ 为什么还要限流：
+       只要求登录还不够 —— 管理员账号本身也可能被拿到（共用电脑没退出、
+       密码泄露），或者自己写了个脚本按秒轮询。这个端点一次要调两个付费接口，
+       刷起来照样能把额度烧光。所以按"每分钟最多几次"兜一层。
+       超限直接 429，并明确告诉对方多久后可以再试。
     """
+    wait = _deep_probe_limiter.hit(str(admin.id))
+    if wait > 0:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"深度探活调用过于频繁（每次都会产生费用），请 {int(wait) + 1} 秒后再试",
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
     data = await run_checks(deep=True, llm_call=llm)
     if not data["healthy"]:
         response.status_code = _UNHEALTHY

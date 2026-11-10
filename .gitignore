@@ -69,3 +69,6 @@ build-logs/
 !requirements*.csv
 # 临时脚本目录（一次性维护脚本、试验性代码）
 tmp/
+# CI 里 npm audit 的输出文件（机器人会生成，不该进仓库）
+frontend/audit.json
+audit.json

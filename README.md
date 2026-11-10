@@ -88,7 +88,7 @@
 │   │       ├── smalltalk.py      # 闲聊识别
 │   │       ├── open_intent.py    # 开放意图识别
 │   │       └── vectorizer.py     # 向量化(百炼嵌入模型)
-│   ├── tests/                # 单元测试（51 个用例，unittest）
+│   ├── tests/                # 自动化测试（485 个用例，含 HTTP 集成与并发测试）
 │   ├── requirements.txt      # Python 依赖
 │   └── .env.example          # 环境变量模板（复制为 .env）
 ├── frontend/                 # Vue3 前端
@@ -170,14 +170,25 @@ npm run dev
 
 ---
 
-## 🧪 单元测试
+## 🧪 自动化测试
 
 ```bash
 cd backend
-.venv\Scripts\python -m unittest discover -s tests -v
+.venv\Scripts\python -m unittest discover -s tests -t . -v
 ```
 
-共 **51 个用例**，覆盖：切块逻辑、向量检索去噪、闲聊识别、开放意图识别等核心模块。
+共 **485 个用例**，覆盖四个层次：
+
+| 层次 | 覆盖内容 |
+|---|---|
+| **单元测试** | 切块逻辑、向量检索去噪、闲聊识别、开放意图识别、内容过滤、额度计算、任务队列、密码策略 |
+| **HTTP 集成测试** | 真实 ASGI 请求走完整链路：鉴权（401/403）、跨组织越权、SSE 流式事件、Cookie 安全属性 |
+| **并发测试** | 额度原子扣减（需要真实 PostgreSQL，CI 里会自动起一个） |
+| **回归测试** | 上述每个修复过的 bug 都有一条用例锁死，防止改回去 |
+
+> 其中 3 个用例在 SQLite 下会跳过（连接池参数、真并发额度），CI 里配了 PostgreSQL 所以会真正执行。
+
+CI 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)：后端测试 + 前端构建 + 依赖漏洞审计 + 密钥扫描。
 
 ---
 
