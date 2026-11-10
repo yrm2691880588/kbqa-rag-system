@@ -1,6 +1,7 @@
 """入库管线编排：文档解析 → 切块 → 向量化 → 写入 Qdrant → 更新状态。
 
-- 每个文档一个独立后台任务（asyncio.create_task），不阻塞网页请求；
+- 每个文档对应数据库里的一条解析任务（P2-15），由工作进程领取执行，不阻塞网页请求；
+  任务可重试、可在重启后恢复，多进程部署也不会重复解析同一个文档；
 - 文档表自带状态机（pending→parsing→embedding→ready/failed）+ progress 百分比，
   前端轮询即可看到实时进度；
 - 任一步失败都记录 error_msg 并置 failed，可一键"重试"（重新入队）；
@@ -8,7 +9,6 @@
   崩溃重试时先删除该文档旧向量点再写，保证不残留脏数据。
 """
 
-import asyncio
 import logging
 from pathlib import Path
 
@@ -28,9 +28,6 @@ logger = logging.getLogger("kbqa.ingestion")
 # backend 根目录（app/services 的上级的上级）
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 UPLOAD_ROOT = BACKEND_DIR / settings.upload_dir
-
-# 正在运行的任务：doc_id -> asyncio.Task（防止重复触发）
-_running_tasks: dict[int, asyncio.Task] = {}
 
 
 def doc_file_path(kb_id: int, doc_id: int, ext: str) -> Path:
@@ -86,6 +83,24 @@ async def _refresh_kb_stats(kb_id: int) -> None:
         if kb is not None:
             kb.chunk_count = chunk_cnt
             await db.commit()
+
+
+async def _record_embedding_usage(kb_id: int, chunks: int) -> None:
+    """把本次向量化的块数记到知识库所属组织的当日用量上。
+
+    为什么要"顺藤摸瓜"找组织：文档表里没有 org_id，只有 kb_id，
+    必须 文档 → 知识库 → 组织 一路查上去才知道这笔账记给谁。
+    （这和隔离校验是同一个套路，漏一步就会把用量记到别人头上。）
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.models.knowledge_base import KnowledgeBase
+    from app.services import quota as quota_service
+
+    async with AsyncSessionLocal() as db:
+        kb = await db.get(KnowledgeBase, kb_id)
+        if kb is None:
+            return
+        await quota_service.add_embedding_chunks(db, kb.org_id, chunks)
 
 
 async def process_document(doc_id: int) -> None:
@@ -147,23 +162,30 @@ async def process_document(doc_id: int) -> None:
         # 5) 完成
         await _set_status(doc_id, "ready", progress=100, error=None, chunk_count=total)
         await _refresh_kb_stats(doc.kb_id)
+        # 5.5) 记一笔向量化用量（按文本块数）。
+        #      放在这里而不是"每批记一次"：批次的粒度太细，用量表一天会被写几百次，
+        #      而额度是"够用就行"，不需要精确到批。失败不影响入库结果——所以吞掉异常。
+        try:
+            await _record_embedding_usage(doc.kb_id, total)
+        except Exception:
+            logger.warning("记录向量化用量失败（不影响入库结果）", exc_info=True)
         logger.info("文档 %s 入库完成（%d 片段）", doc.filename, total)
     except Exception as e:
         logger.exception("文档 %d 入库失败", doc_id)
         await _set_status(doc_id, "failed", error=str(e)[:2000])
-    finally:
-        _running_tasks.pop(doc_id, None)
+        # 说明：这里把异常吞掉了（只记状态），因为是"队列里还有重试机会"。
+        # 但注意——process_document 是被 job_queue 调用的，
+        # 如果这里吞掉异常，队列就会误判"任务成功"，永远不会重试。
+        # 所以吞掉之前先**重新抛出去**，让队列来决定是重试还是彻底放弃。
+        raise
 
 
-def start_ingestion(doc_id: int) -> None:
-    """为文档创建一个后台入库任务；已存在同文档任务则跳过。"""
-    if doc_id in _running_tasks and not _running_tasks[doc_id].done():
-        return
-    task = asyncio.create_task(process_document(doc_id))
-    _running_tasks[doc_id] = task
-
-
-def is_ingesting(doc_id: int) -> bool:
-    """该文档是否正在入库。"""
-    t = _running_tasks.get(doc_id)
-    return bool(t and not t.done())
+# 说明：这里曾经有一个 start_ingestion(doc_id)，作用是"在内存里起一个后台任务去解析"。
+# P2-15 之后它已被**删除**，改成由接口层调用 job_queue.enqueue(db, doc_id, kb_id) 排队。
+#
+# 为什么必须删掉而不是留着兼容：
+#   它内部用的是"全局数据库连接"（AsyncSessionLocal），绕开了请求自己的会话。留着它，
+#   早晚有人图省事又调它，于是又回到"任务留在内存里、进程一重启就丢"的老问题；
+#   而且它会让验证脚本无法把数据库重定向到临时库（依赖注入换不掉全局连接），
+#   导致测试悄悄写到正式库上 —— 这个坑本项目已经踩过一次。
+#   删掉它，"入队"这件事就只有一条路可走，也就不会走错。

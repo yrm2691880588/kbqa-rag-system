@@ -16,9 +16,11 @@ import json
 import logging
 import time
 
+import httpx
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.services import ai_guard
 from app.services.retriever import retrieve
 from app.services.smalltalk import detect_smalltalk
 
@@ -34,7 +36,15 @@ def _get_llm_client() -> AsyncOpenAI:
         _llm_client = AsyncOpenAI(
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
-            timeout=120,
+            # 两种超时分开设：
+            #   · 总超时给得很宽 —— 长文档总结这类回答本来就要跑很久；
+            #   · 建连超时给得短 —— "域名解析不了 / 网络不通 / 防火墙拦了"
+            #     这类问题要很快暴露，不能让用户对着转圈等两分钟。
+            # 分开设才有意义；只给一个总超时的话，网络不通也要等到总超时才报错。
+            timeout=httpx.Timeout(
+                float(getattr(settings, "llm_request_timeout", 120.0) or 120.0),
+                connect=float(getattr(settings, "llm_connect_timeout", 15.0) or 15.0),
+            ),
             max_retries=0,  # 流式中断由调用方捕获处理，不自动重试
         )
     return _llm_client
@@ -119,11 +129,31 @@ async def _stream_mock_answer(question: str, citations: list[dict]):
         yield ("answer", {"text": mock_text[i : i + step]})
 
 
+def _remember(cache_key: str, answer: str, citations: list) -> None:
+    """一次问答结束后的收尾：更新熔断状态，并按需写入问题缓存。
+
+    ⚠️ 为什么要抽成函数：真实调用和模拟模式（压测/本地开发）是**两条不同的代码路径**。
+        如果只在其中一条里写缓存，就会出现"本地测着缓存好使、上线完全没生效"——
+        这种问题在开发时根本发现不了。抽成一处，两条路都走它，就不会漏。
+    """
+    if answer.strip():
+        # "成功"的定义要卡严：**真的产出了回答文字**才算成功。
+        # 如果模型返回空内容也算成功，熔断器就永远跳不了闸 ——
+        # 上游"半死不活"（每次都 200 但内容为空）时，熔断形同虚设。
+        ai_guard.llm_breaker.record_success()
+        # 只有"真答出来了"才写缓存：空回答写进去，下次命中就是给用户一个空气泡
+        if cache_key:
+            ai_guard.question_cache.put(cache_key, {"answer": answer, "citations": citations})
+    else:
+        ai_guard.llm_breaker.record_failure()
+
+
 async def stream_answer(
     question: str,
     history: list[dict],
     kb_ids: list[int] | None = None,
     client: AsyncOpenAI | None = None,
+    cache_scope: str = "",
 ):
     """流式问答生成器：yield (event, data) 元组，由 API 层逐条转成 SSE 发往前端。
 
@@ -132,6 +162,9 @@ async def stream_answer(
         history: 最近多轮历史 [{"role": "user"|"assistant", "content": "..."}, ...]。
         kb_ids: 限定检索的知识库 id 列表；None=全部。
         client: 测试时可注入 mock 客户端。
+        cache_scope: 缓存隔离键（P2-16）。调用方传"是谁在问"（例如组织 id）。
+            **不传就不使用缓存** —— 这个默认值是刻意安全的：
+            万一调用方忘了传，后果是"没缓存、多花点钱"，而不是"串了别人的答案"。
 
     Yields:
         (event, data) 事件对，事件类型：
@@ -155,6 +188,33 @@ async def stream_answer(
         })
         return
 
+    # 0.5) 问题缓存（P2-16）：同样的问法直接返回上次的答案，省一次检索 + 一次模型调用。
+    #
+    #     三条"什么时候才敢用缓存"的判断，缺一不可：
+    #       ① 调用方给了隔离键 —— 否则可能把别人的答案发给当前用户；
+    #       ② **没有多轮历史** —— 追问（"那它呢？"）的含义完全取决于上下文，
+    #          只按问题原文缓存会答错；
+    #       ③ 配置里确实开了 —— 默认是关的，因为知识库刚更新时缓存会答"老话"。
+    cache_key = ""
+    if cache_scope and not history:
+        cache_key = ai_guard.make_cache_key(question, kb_ids, cache_scope)
+        cached = ai_guard.question_cache.get(cache_key)
+        if cached is not None:
+            # 命中缓存：把上次的引用清单和整段回答原样"重放"一遍。
+            # 前端拿到的事件结构与真实回答完全一致，它不需要知道这是缓存。
+            yield ("meta", {"citations": cached.get("citations", []), "cached": True})
+            if cached.get("answer"):
+                yield ("answer", {"text": cached["answer"]})
+            yield ("done", {
+                "latency_ms": int((time.time() - started) * 1000),
+                "citations": cached.get("citations", []),
+                "has_answer": bool(cached.get("answer")),
+                "cached": True,
+                "tokens_in": 0,
+                "tokens_out": 0,
+            })
+            return
+
     try:
         # 1) 检索知识库（retriever 内部已完成文档级去噪与截断）
         hits = await retrieve(question, kb_ids=kb_ids, top_k=settings.retrieval_top_k)
@@ -174,8 +234,13 @@ async def stream_answer(
 
         # 3) 组装消息，流式调模型（压测模式下走本地模拟流，不联网不花钱）
         if settings.llm_mock:
+            mock_parts: list[str] = []
             async for evt, data in _stream_mock_answer(question, citations):
+                if evt == "answer":
+                    mock_parts.append(data.get("text", ""))
                 yield evt, data
+            mock_answer = "".join(mock_parts)
+            _remember(cache_key, mock_answer, citations)
             yield ("done", {
                 "latency_ms": int((time.time() - started) * 1000),
                 "citations": citations,
@@ -186,17 +251,60 @@ async def stream_answer(
 
         messages = build_messages(question, history, citations)
         llm = client or _get_llm_client()
-        stream = await llm.chat.completions.create(
+
+        # 熔断闸门（P2-16）：外部服务连续失败到阈值后，这里直接快速失败。
+        # 为什么要"快速失败"：外部接口坏了的时候，每个请求都干等 120 秒才报错，
+        # 工作线程会迅速被占满 —— 结果是"大模型挂了"变成"我们网站也打不开了"。
+        # 跳闸期间立刻回一句"稍后再试"，至少网站本身还能正常打开。
+        if not ai_guard.llm_breaker.allow():
+            logger.warning("熔断器处于跳闸状态，本次请求快速失败（不调用大模型）")
+            yield ("error", {
+                "message": "问答服务暂时繁忙，请稍后重试。",
+                "reason": "circuit_open",
+            })
+            yield ("done", {
+                "latency_ms": int((time.time() - started) * 1000),
+                "citations": citations,
+                "has_answer": False,
+            })
+            return
+        # 如果在试探状态，先占一个试探名额（避免冷却一结束就涌进一堆请求）
+        ai_guard.llm_breaker.record_trial()
+
+        call_kwargs = dict(
             model=settings.llm_model,
             messages=messages,
             temperature=settings.llm_temperature,
             max_tokens=settings.llm_max_tokens,
             stream=True,
         )
+        # 尽量把 token 用量一起取回来（用于额度计量）。
+        # 这个参数不是所有兼容网关都认，不认识会直接报错——所以失败就退回老写法：
+        # **宁可拿不到用量数字，也不能让问答本身用不了**。
+        try:
+            if settings.llm_stream_usage:
+                try:
+                    stream = await llm.chat.completions.create(
+                        **call_kwargs, stream_options={"include_usage": True}
+                    )
+                except Exception:
+                    logger.warning("上游不支持 stream_options（拿不到 token 用量），本次按普通模式继续")
+                    stream = await llm.chat.completions.create(**call_kwargs)
+            else:
+                stream = await llm.chat.completions.create(**call_kwargs)
+        except Exception:
+            # 连"发起请求"这一步都没成功（网络不通、密钥失效、被限流）→ 记一次熔断失败
+            ai_guard.llm_breaker.record_failure()
+            raise
 
         # 4) 逐块转发：思考字段与回答字段各自增量输出
         answer_parts: list[str] = []
+        usage = None
         async for chunk in stream:
+            # 用量一般挂在最后一个 chunk 上（choices 为空、usage 有值）
+            u = getattr(chunk, "usage", None)
+            if u is not None:
+                usage = u
             if not getattr(chunk, "choices", None):
                 continue
             delta = chunk.choices[0].delta
@@ -210,12 +318,18 @@ async def stream_answer(
 
         # 5) 结束
         full_answer = "".join(answer_parts)
+        _remember(cache_key, full_answer, citations)
+
         yield ("done", {
             "latency_ms": int((time.time() - started) * 1000),
             "citations": citations,
             "has_answer": bool(full_answer.strip()),
+            "tokens_in": getattr(usage, "prompt_tokens", 0) or 0,
+            "tokens_out": getattr(usage, "completion_tokens", 0) or 0,
         })
     except Exception as e:
         logger.exception("问答流程异常")
+        # 记一次熔断失败：这是"外部服务可能真的挂了"最直接的信号
+        ai_guard.llm_breaker.record_failure()
         yield ("error", {"message": f"回答生成失败：{str(e)[:300]}"})
         yield ("done", {"latency_ms": int((time.time() - started) * 1000), "citations": []})

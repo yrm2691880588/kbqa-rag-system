@@ -59,15 +59,33 @@ async def get_current_user(
 
 
 async def require_admin(current_user: Annotated[User, Depends(get_current_user)]) -> User:
-    """管理员专用接口的依赖：非 admin 一律 403。"""
+    """管理员专用接口的依赖：非 admin 一律 403。
+
+    多租户语境下这代表"组织管理员"——他能管的是**本组织**的知识库与成员，
+    具体的组织范围校验在各自的接口里通过 core.tenancy 完成。
+    """
     if current_user.role != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "需要管理员权限")
+    return current_user
+
+
+async def require_superadmin(current_user: Annotated[User, Depends(get_current_user)]) -> User:
+    """平台超管专用接口的依赖（创建/管理组织）。
+
+    为什么单独区分这一层：
+        组织管理员只能在"自己组织"里管东西；而"新建客户组织"是跨组织的动作，
+        属于平台运营方（你自己）的权限。两者混在一起，任何一个客户的
+        管理员都能给自己开一个"新组织"，计费与隔离就都失控了。
+    """
+    if not getattr(current_user, "is_superadmin", False):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "需要平台管理员权限")
     return current_user
 
 
 # 类型别名，让路由签名更简洁
 CurrentUser = Annotated[User, Depends(get_current_user)]
 AdminUser = Annotated[User, Depends(require_admin)]
+SuperAdminUser = Annotated[User, Depends(require_superadmin)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 

@@ -6,7 +6,8 @@
 - 验证码答案只存 sha256 哈希（DB 泄露也看不到原文）
 - 所有限流/计数都落在数据库 → 后端多进程部署时统计依然全局一致
 - 时间判断统一取回后在 Python 层比较（规避 PG/SQLite 时区存储差异）
-- 短信 mock 模式（sms_provider=mock）不真发短信，固定验证码 123456，方便本地开发与测试
+- 短信发送走 services/sms.py 的"插座"：由配置决定用哪条通道（mock/webhook/aliyun），
+  业务代码不关心具体服务商；发送失败会回滚验证码记录，不占用用户的冷却时间
 """
 
 import base64
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.login_failure import LoginFailure
 from app.models.verification_code import VerificationCode
+from app.services.sms import SmsSendResult, build_code_text, get_sms_sender
 
 logger = logging.getLogger("kbqa.auth")
 
@@ -59,9 +61,11 @@ def _as_utc(value: dt.datetime) -> dt.datetime:
     return value
 
 
-def _recent_codes(db_result_rows: list) -> list:
-    """把数据库取回的验证码行转成 (时间, 行) 列表，时间已归一可比。"""
-    return [(r.created_at, r) for r in db_result_rows]
+# 说明：这里曾经有个 _recent_codes() 辅助函数，用来把验证码行转成 (时间, 行) 列表。
+# 后来各处改成直接遍历并调 _as_utc() 比较，它就没人用了 —— P2-23 收口时删除。
+# 顺手记一条纪律：**没人调用的函数要删掉，不能"留着以后可能用"**。
+# 因为读代码的人会花时间去理解它、甚至以为它还在被使用，
+# 结果排查问题时被一个"其实没跑"的函数带偏。
 
 
 # ============================================================
@@ -222,25 +226,48 @@ async def issue_sms_code(db: AsyncSession, phone: str, ip: str) -> tuple[bool, s
     if ip_count >= ip_hour_limit:
         return False, "发送过于频繁，请稍后再试", None
 
-    # 生成并保存验证码（答案只存哈希）
-    code = "123456" if settings.sms_provider == "mock" else f"{random.randint(0, 999999):06d}"
-    db.add(
-        VerificationCode(
-            kind="sms",
-            target=phone,
-            ip=ip,
-            code_hash=_sha256(code),
-            expires_at=now + dt.timedelta(minutes=settings.sms_code_ttl_minutes),
-        )
+    # 生成并保存验证码（答案只存哈希，明文只在内存里过一趟）
+    is_mock = (settings.sms_provider or "mock").strip().lower() == "mock"
+    code = "123456" if is_mock else f"{random.randint(0, 999999):06d}"
+    row = VerificationCode(
+        kind="sms",
+        target=phone,
+        ip=ip,
+        code_hash=_sha256(code),
+        expires_at=now + dt.timedelta(minutes=settings.sms_code_ttl_minutes),
     )
+    db.add(row)
     await db.commit()
+    await db.refresh(row)
 
-    if settings.sms_provider == "mock":
-        # 测试模式：不真发短信，验证码固定 123456，随接口返回方便前端开发
-        logger.info("[SMS-MOCK] 给 %s 发送验证码 %s（测试模式）", phone, code)
-        return True, "验证码已发送（测试模式）", code
-    # 真实短信通道在此接入（上线前实现：调阿里云/腾讯云短信 API）
-    logger.info("[SMS] 给 %s 发送验证码（真实通道待接入）", phone)
+    # 交给配置选定的那条短信通道真去发（P1-H）
+    text = build_code_text(code, settings.sms_code_ttl_minutes)
+    sender = None
+    try:
+        sender = get_sms_sender()
+        result = await sender.send(phone, code, text)
+    except Exception:
+        # 配置写错（例如 SMS_PROVIDER 填了个不认识的名字）不该让接口直接 500 ——
+        # 那是运维问题，用户看到的应该是"发送失败，请稍后重试"，日志里才是真正的原因。
+        logger.exception("短信通道不可用")
+        result = SmsSendResult(ok=False, reason="短信通道配置有误")
+
+    if not result.ok:
+        # ⚠️ 关键一步：发送失败要把刚存下的这条验证码删掉。
+        # 不删的话有两个坏结果：
+        #   ① 用户看到"发送失败"，想重试却被 60 秒冷却时间挡着，体验很糟；
+        #   ② 库里留下一条谁都不知道的验证码，白占位置、也让"发了几条"的统计不准。
+        await db.delete(row)
+        await db.commit()
+        logger.warning(
+            "短信发送失败（通道 %s）：%s —— 已回滚该验证码记录，用户可立即重试",
+            getattr(sender, "name", "?"), result.reason,
+        )
+        return False, "短信发送失败，请稍后重试", None
+
+    if is_mock:
+        # 测试模式：把验证码随接口返回，前端据此提示"测试码 123456"，方便本地开发
+        return True, "验证码已发送（测试模式）", result.test_code or code
     return True, "验证码已发送", None
 
 

@@ -189,7 +189,12 @@ async def search(
 
     Args:
         query_vector: 问题向量化后的向量。
-        kb_ids: 限定检索的知识库 id 列表；None=检索全部（用户未选库时）。
+        kb_ids: 限定检索的知识库 id 列表；None=不限制（仅平台级调用才会这么传）。
+            ⚠️ 注意语义区分（多租户安全关键）：
+              - None  → 不加过滤，检索所有库；
+              - []    → 明确表示"该用户一个库都不能用"，直接返回空结果。
+            两者绝不能混为一谈。历史上这里写的是 `if kb_ids:`，空列表会被当成
+            "没有限制"，等于把别家客户的知识库也搜出来了 —— 属于数据泄露，已修正。
         top_k: 取回候选片段数，默认用配置 retrieval_top_k。
         score_threshold: 相似度下限，低于该值的片段被丢弃；默认用配置。
 
@@ -197,12 +202,17 @@ async def search(
         按相似度从高到低排列的命中列表，每项含：
         kb_id / doc_id / doc_name / chunk_index / page / text / score。
     """
+    # 空列表 = 明确无权访问任何知识库：直接返回空，绝不能退化成"不加过滤"
+    if kb_ids is not None and len(kb_ids) == 0:
+        return []
+
     client = get_client()
     top_k = top_k or settings.retrieval_top_k
     threshold = settings.retrieval_score_threshold if score_threshold is None else score_threshold
 
     must: list = []
-    if kb_ids:
+    # 注意用 `is not None` 而不是真值判断，避免空列表被误当成"不限制"
+    if kb_ids is not None:
         must.append(
             FieldCondition(
                 key="kb_id",

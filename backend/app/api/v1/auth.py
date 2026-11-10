@@ -12,7 +12,7 @@ import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -23,15 +23,21 @@ from app.core.security import (
     create_refresh_token,
     decode_token,
     hash_password,
+    validate_password_strength,
     verify_password,
 )
+from app.models.organization import Organization
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.schemas.auth import LogoutRequest, RefreshRequest, TokenPair
 from app.schemas.user import (
     BindPhoneRequest,
     CaptchaOut,
+    ForgotPasswordRequest,
     LoginRequest,
+    RegisterPolicyOut,
+    ResetPasswordRequest,
+    SimpleMessageOut,
     SmsLoginRequest,
     SmsSendOut,
     SmsSendRequest,
@@ -89,6 +95,18 @@ async def get_captcha(db: DbSession):
     )
 
 
+# ============ 注册策略（公开、只读）============
+
+@router.get("/register-policy", response_model=RegisterPolicyOut)
+async def get_register_policy():
+    """告诉前端"注册时邀请码是选填还是必填"，用于把注册页的提示文字说清楚。
+
+    这是公开接口（无需登录）：注册页在用户登录之前就要展示，登录不了就取不到。
+    返回内容只有一个布尔值，不含任何组织名、邀请码等敏感信息。
+    """
+    return RegisterPolicyOut(invite_required=settings.registration_requires_invite)
+
+
 # ============ 注册（防机器人）============
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -118,17 +136,54 @@ async def register(payload: UserRegister, request: Request, db: DbSession):
     if exists:
         raise HTTPException(status.HTTP_409_CONFLICT, "用户名已被注册，请换一个")
 
+    # 组织归属：决定这个账号以后能看到哪些知识库
+    org_id = await _resolve_org_for_register(db, payload.invite_code)
+
     user = User(
         username=payload.username,
         password_hash=hash_password(payload.password),
         nickname=payload.nickname or payload.username,
         role="user",
         register_ip=ip,
+        org_id=org_id,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def _resolve_org_for_register(db: DbSession, invite_code: str) -> int | None:
+    """按邀请码决定新账号加入哪个组织。
+
+    规则：
+      - 填了邀请码 → 校验后加入该组织（码错/组织停用则直接拒绝注册）；
+      - 没填      → 看配置 registration_requires_invite：
+                      False（私有部署）→ 加入默认组织，同事自助注册即可；
+                      True（对外 SaaS）→ 拒绝，必须凭码注册。
+
+    为什么要给这个开关：
+        一套系统"只服务一家公司"和"服务多家客户"的安全要求完全不同。
+        前者不填码就进默认组织是方便；后者就是漏洞——陌生人注册进来就能看到客户资料。
+    """
+    code = (invite_code or "").strip()
+
+    if code:
+        org = await db.scalar(select(Organization).where(Organization.invite_code == code))
+        if org is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "邀请码无效，请向管理员确认")
+        if not org.is_active:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "该组织已停用，无法加入")
+        return org.id
+
+    if settings.registration_requires_invite:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "本系统需要组织邀请码才能注册，请向管理员索取"
+        )
+
+    # 不强制邀请码：落到最早的（默认）组织，保证注册后至少有个正常的工作范围
+    org = (await db.execute(select(Organization).order_by(Organization.id))).scalars().first()
+    return org.id if org else None
 
 
 # ============ 账号密码登录（防撞库）============
@@ -191,6 +246,8 @@ async def sms_login(payload: SmsLoginRequest, db: DbSession, _: None = Depends(l
 
     if user is None:
         # 自动注册：用户名 = u + 手机号（唯一），密码为随机值（此账号只用手机号登录）
+        # 组织归属走与"用户名注册"完全相同的规则，避免两条自助入口的反作弊策略不一致
+        org_id = await _resolve_org_for_register(db, "")
         random_pw = secrets.token_urlsafe(24)
         user = User(
             username="u" + phone,
@@ -198,6 +255,7 @@ async def sms_login(payload: SmsLoginRequest, db: DbSession, _: None = Depends(l
             nickname="用户" + phone[-4:],
             role="user",
             phone=phone,
+            org_id=org_id,
         )
         db.add(user)
         await db.commit()
@@ -207,6 +265,97 @@ async def sms_login(payload: SmsLoginRequest, db: DbSession, _: None = Depends(l
         raise HTTPException(status.HTTP_403_FORBIDDEN, "账号已被禁用，请联系管理员")
 
     return await _issue_tokens(db, user)
+
+
+# ============ 忘记密码 / 重置密码 ============
+#
+# 为什么需要这一组接口：
+#   账号密码登录是老用户唯一的入口。一旦忘记密码，原来只能人工找管理员改库，
+#   既有安全风险（管理员手上有别人的密码），也把客服绑死。这里补上自助恢复通道。
+#
+# 整体思路（两步）：
+#   第一步 /password/forgot —— 证明"我确实拿着这个手机号"：先答图形验证码（挡脚本），
+#                              再往已绑定手机号发一条重置短信验证码。
+#   第二步 /password/reset  —— 用收到的短信验证码换一个新密码。
+#
+# 两个安全要点：
+#   ① **不暴露手机号是否已注册**（防账号枚举）：账号不存在时也回同一句话。
+#   ② **重置成功要把所有设备踢下线**：密码重置最常见的场景就是"账号被盗"，
+#      如果旧设备的登录状态还能继续用，等于没改。
+
+
+@router.post("/password/forgot", response_model=SmsSendOut)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    db: DbSession,
+    _: None = Depends(login_rate_limiter),
+):
+    """忘记密码第一步：往已绑定的手机号发一条重置验证码。"""
+    ip = _client_ip(request)
+    phone = payload.phone.strip()
+
+    # 图形验证码：挡住"脚本批量刷短信"（短信是要花钱的，还能被当成骚扰工具）
+    if not await auth_guard.consume_captcha(db, payload.captcha_id, payload.captcha_code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "图形验证码错误或已过期，请刷新后重试")
+
+    # 统一对外话术：无论账号存不存在，说的都是同一句
+    generic_msg = "如果该手机号已绑定账号，重置验证码已发送，请留意短信"
+
+    user = await db.scalar(select(User).where(User.phone == phone))
+    if user is None or not user.is_active:
+        # 账号不存在 / 已被禁用：不发短信，但也**不能**告诉对方"查无此人"，
+        # 否则这个接口就变成了"手机号是否注册过"的查询器。
+        logger.info("忘记密码：手机号 %s 无可用账号，已按统一话术回复（防账号枚举）", phone)
+        return SmsSendOut(message=generic_msg, dev_code=None, retry_after=settings.sms_cooldown_seconds)
+
+    ok, msg, dev_code = await auth_guard.issue_sms_code(db, phone, ip)
+    if not ok:
+        # 冷却/超限：这类提示与"账号是否存在"无关，可以如实告诉用户
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, msg)
+    return SmsSendOut(message=generic_msg, dev_code=dev_code, retry_after=settings.sms_cooldown_seconds)
+
+
+@router.post("/password/reset", response_model=SimpleMessageOut)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    db: DbSession,
+    _: None = Depends(login_rate_limiter),
+):
+    """忘记密码第二步：凭短信验证码设置新密码，并踢掉所有旧登录状态。"""
+    phone = payload.phone.strip()
+
+    # 先"验证但先不作废"（consume=False）。
+    # 为什么要多这一步：如果直接作废，用户只是密码填得不合规范（比如太简单），
+    # 这一条短信验证码就白费了，还得重新获取一条。所以顺序是
+    # 验码 → 查账号 → 校验新密码强度 → 最后才真正把码用掉。
+    if not await auth_guard.verify_sms_code(db, phone, payload.code, consume=False):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "验证码错误或已过期，请重新获取")
+
+    user = await db.scalar(select(User).where(User.phone == phone))
+    if user is None or not user.is_active:
+        # 到这一步还查不到账号，说明验证码和手机号对不上。统一提示，不透露账号情况。
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "验证码错误或已过期，请重新获取")
+
+    # 密码强度必须在这里校验：规则里有"不能包含用户名"，只有查到账号后才拿得到用户名
+    ok, reason = validate_password_strength(payload.new_password, user.username)
+    if not ok:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, reason)
+
+    # 到这一步才真正消费验证码（一次性，防重放）
+    await auth_guard.verify_sms_code(db, phone, payload.code, consume=True)
+
+    user.password_hash = hash_password(payload.new_password)
+    # 关键一步：把该账号名下所有还没过期的刷新令牌全部作废。
+    # 不这么做的话，"账号被盗 → 改密码"之后，盗号者的登录状态仍然有效，等于白改。
+    await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id, RefreshToken.revoked.is_(False))
+        .values(revoked=True)
+    )
+    await db.commit()
+    logger.info("用户 %s 已通过短信验证码重置密码，旧登录状态已全部失效", user.username)
+    return SimpleMessageOut(message="密码已重置，请用新密码登录")
 
 
 # ============ 刷新令牌 / 登出 ============

@@ -1,20 +1,29 @@
-# 企业级电商知识库 RAG 问答系统 —— Docker 底层服务
-# Qdrant：专业向量搜索数据库（存知识库片段的"数字指纹"）
-# PostgreSQL：业务数据库（存用户/会话/消息/知识库元数据）
+# ============================================================
+# 企业级知识库 RAG 问答系统 —— 容器编排
+# ------------------------------------------------------------
+# 【开发用法】只起底层数据库（后端/前端在本地用脚本启动，热重载调试方便）
+#     docker compose up -d
 #
-# 使用方法（在本文件所在目录执行）：
-#   docker compose up -d    启动
-#   docker compose down     停止（保留数据）
-#   docker compose down -v  停止并清空数据（慎用）
+# 【生产用法】起完整一套（数据库 + 后端 + 前端），对外只需开放 80/443
+#     docker compose --profile prod up -d --build
+#
+# 停止：docker compose down（保留数据）
+# 清空数据重来：docker compose down -v（慎用，会删光数据库与上传文件）
+#
+# 说明：后端/前端打了 `profiles: ["prod"]` 标签，所以默认的 up 不会构建它们，
+#       开发时依旧是"只起数据库"的轻量用法，互不干扰。
+# ============================================================
 
 services:
+  # ---------------- 向量库：存知识库片段的"数字指纹" ----------------
   qdrant:
     image: qdrant/qdrant:latest
     container_name: kbqa-qdrant
     restart: unless-stopped
     ports:
-      - "6333:6333"   # HTTP 管理/检索接口
-      - "6334:6334"   # gRPC 高性能接口
+      # 只绑定本机回环地址：开发时本机能连，公网无法直连（安全）
+      - "127.0.0.1:6333:6333"   # HTTP 接口
+      - "127.0.0.1:6334:6334"   # gRPC 接口
     volumes:
       - qdrant_data:/qdrant/storage   # 向量数据持久化，容器删了数据还在
     healthcheck:
@@ -23,14 +32,15 @@ services:
       timeout: 3s
       retries: 10
 
+  # ---------------- 业务数据库：用户/会话/消息/知识库元数据 ----------------
   postgres:
     image: postgres:16-alpine
     container_name: kbqa-postgres
     restart: unless-stopped
-    # 数据库账号密码通过环境变量注入，文件内不写任何明文口令：
-    # 在 docker-compose.yml 同目录建 .env（已 gitignore，不会上传）填入：
+    # 账号密码通过环境变量注入，文件内不写任何明文口令。
+    # 在 docker-compose.yml 同目录建 .env（已被 gitignore）填入：
     #   POSTGRES_USER=kbqa
-    #   POSTGRES_PASSWORD=你的本地数据库密码
+    #   POSTGRES_PASSWORD=你的数据库强密码
     #   POSTGRES_DB=kbqa
     # 模板见仓库根目录 .env.example（占位符，可提交）
     environment:
@@ -38,7 +48,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      # 同样只绑本机：容器之间通过服务名互访，不需要对外暴露数据库
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data   # 业务数据持久化
     healthcheck:
@@ -47,6 +58,80 @@ services:
       timeout: 3s
       retries: 10
 
+  # ---------------- 后端 API（FastAPI + 多进程）----------------
+  backend:
+    profiles: ["prod"]
+    build:
+      context: ./backend
+      # 可选：传入国内 pip 源以加速构建，例如在根目录 .env 里写
+      #   PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+    image: kbqa-backend:latest
+    container_name: kbqa-backend
+    restart: unless-stopped
+    # 生产配置从 backend/.env 读取（含密钥，已在 gitignore 内；模板见 backend/.env.prod.example）
+    env_file:
+      - ./backend/.env
+    environment:
+      # 进程数：注意 进程数 × 每进程连接池 不要超过数据库连接上限（默认 100）
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-4}
+    volumes:
+      - uploads_data:/app/data/uploads   # 上传的原文件持久化（换容器不丢）
+    ports:
+      # 只对本机开放：外部流量统一走前端 nginx，避免绕过反代直连后端
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live',timeout=3).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+  # ---------------- 前端（nginx 托管页面 + 反代接口）----------------
+  frontend:
+    profiles: ["prod"]
+    build:
+      context: ./frontend
+      # 可选：传入国内 npm 源以加速构建，例如在根目录 .env 里写
+      #   NPM_REGISTRY=https://registry.npmmirror.com
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    image: kbqa-frontend:latest
+    container_name: kbqa-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"      # 对外入口；配置 HTTPS 后改为 443（见 deploy/README.md 的 HTTPS 一节）
+    volumes:
+      # 证书校验目录：申请 HTTPS 证书时 Let's Encrypt 会来取验证文件
+      - certbot_www:/var/www/certbot:ro
+      # 已签发的证书（启用 HTTPS 后 nginx 从这里读取）
+      - letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
 volumes:
+  # 显式命名数据卷：备份脚本要按固定名字找到它们（默认名字会随目录名变化，不可靠）
   qdrant_data:
+    name: kbqa_qdrant_data
   pgdata:
+    name: kbqa_pgdata
+  uploads_data:
+    name: kbqa_uploads_data   # 上传的原文件（备份时需一并备份，详见 deploy/README.md）
+  # HTTPS 证书相关（启用 HTTPS 后才用得到，见 deploy/README.md）
+  certbot_www:
+    name: kbqa_certbot_www
+  letsencrypt:
+    name: kbqa_letsencrypt

@@ -1,0 +1,87 @@
+# ============================================================
+# HTTPS 站点配置模板（启用 HTTPS 时，用它替换 frontend/nginx.conf）
+# ------------------------------------------------------------
+# 使用步骤（详见 deploy/README.md 的 HTTPS 一节）：
+#   1. 把本文件里的 <你的域名> 全部替换成真实域名
+#   2. 先跑 deploy/init-letsencrypt.sh 申请到证书
+#   3. 用本文件覆盖 frontend/nginx.conf
+#   4. 修改 docker-compose.yml 中 frontend 的端口映射：把 "80:80" 改成 "80:80"+"443:443"
+#   5. 重建前端容器：docker compose --profile prod up -d --build frontend
+# ============================================================
+
+# ---- 80 端口：只负责证书校验与跳转 ----
+server {
+    listen 80;
+    server_name <你的域名>;
+
+    # 证书校验目录（申请/续期时用）
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # 其余请求一律跳转到 HTTPS（浏览器地址栏就会显示安全小锁）
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---- 443 端口：正式服务 ----
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name <你的域名>;
+
+    # 证书文件（由 deploy/init-letsencrypt.sh 自动生成到共享卷里）
+    ssl_certificate     /etc/letsencrypt/live/<你的域名>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<你的域名>/privkey.pem;
+
+    # 只保留安全的协议与加密套件
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    root /usr/share/nginx/html;
+    index index.html;
+    # 上传上限：与后台配置 MAX_UPLOAD_MB（默认 100MB）配成一对，改要一起改，
+    # 否则大文件会被 nginx 先拦掉，报的还是 nginx 自己的 413，容易误判成后端故障
+    client_max_body_size 120m;
+
+    gzip on;
+    gzip_min_length 1k;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    # 接口反向代理（配置与 HTTP 版一致，另外补上 HTTPS 协议标记）
+    location /api/ {
+        proxy_pass http://backend:8000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection        "";
+
+        # AI 回答是流式的，必须关闭缓冲，否则会"憋一大段再一次性蹦出来"
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 安全响应头（HTTPS 下再加上 HSTS：告诉浏览器以后只走加密连接）
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+}

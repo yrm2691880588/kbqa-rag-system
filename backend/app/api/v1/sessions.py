@@ -11,9 +11,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.core.deps import CurrentUser, DbSession
+from app.core.tenancy import resolve_kb_scope
 from app.models.message import Message
 from app.models.session import ChatSession
-from app.schemas.chat import MessageOut, SessionCreate, SessionOut, SessionUpdate
+from app.schemas.chat import FeedbackRequest, MessageOut, SessionCreate, SessionOut, SessionUpdate
 
 logger = logging.getLogger("kbqa.api.sessions")
 
@@ -58,7 +59,19 @@ async def list_sessions(current_user: CurrentUser, db: DbSession):
 @router.post("", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 async def create_session(payload: SessionCreate, current_user: CurrentUser, db: DbSession):
     """新建一条会话（标题暂为"新对话"，首轮问答后自动生成）。"""
-    s = ChatSession(user_id=current_user.id, title="新对话", kb_scope=payload.kb_ids)
+    # 租户校验：前端传进来的知识库 id 必须先收敛，避免把别家组织的库 id 存进会话。
+    # 注意这里特意区分两种语义：
+    #   kb_ids 留空  → 存 None，表示"跟着我全部可访问的库走"（将来新建的库也能被检索到）
+    #   kb_ids 有值  → 存校验后的具体列表（越权 id 已被剔除）
+    kb_scope: list[int] | None = None
+    if payload.kb_ids:
+        resolved = await resolve_kb_scope(db, current_user, payload.kb_ids)
+        if not resolved:
+            # 选了却一个都不合法：明确报错，而不是静默退化成"全部库"
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "所选知识库不存在或无权访问")
+        kb_scope = resolved
+
+    s = ChatSession(user_id=current_user.id, title="新对话", kb_scope=kb_scope)
     db.add(s)
     await db.commit()
     await db.refresh(s)
@@ -108,3 +121,41 @@ async def list_messages(
     rows = (await db.execute(stmt)).scalars().all()
     rows.reverse()  # 恢复时间正序，前端按顺序渲染
     return rows
+
+
+@router.post("/{session_id}/messages/{message_id}/feedback", response_model=MessageOut)
+async def set_message_feedback(
+    session_id: int,
+    message_id: int,
+    payload: FeedbackRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """给某条 AI 回答打「赞 / 踩 / 取消」。
+
+    为什么必须逐层校验归属（这是本接口唯一的安全要点）：
+        消息表里没有 user_id，只有 session_id。如果只看 message_id 就改，
+        任何登录用户把 URL 里的数字换个值，就能给**别人的**回答打标签——
+        既污染数据，也等于变相确认了"这条消息存在"。
+        所以这里严格走 会话属于我 → 消息属于这个会话 → 且是 AI 回答 三步。
+
+    越权一律返回 404（而不是 403）：403 等于告诉对方"这条消息存在但没权限"。
+    """
+    # 第 1 步：会话必须是我自己的（复用已有的 _own_session，不存在/非本人 → 404）
+    await _own_session(db, session_id, current_user.id)
+
+    # 第 2 步：消息必须挂在**这个**会话下（防止"我的会话 + 别人的消息"这种拼装）
+    msg = await db.get(Message, message_id)
+    if msg is None or msg.session_id != session_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "消息不存在")
+
+    # 第 3 步：只能给 AI 的回答打分（用户自己的提问没有"回答是否准确"这回事）
+    if msg.role != "assistant":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "只能对 AI 回答进行评价")
+
+    # 落库：0 表示"取消评价"，存 NULL 而不是存 0，避免把"没评价"和"评价为 0"混在一起
+    msg.feedback = payload.feedback if payload.feedback != 0 else None
+    msg.feedback_note = (payload.note or None) if payload.feedback == -1 else None
+    await db.commit()
+    await db.refresh(msg)
+    return msg

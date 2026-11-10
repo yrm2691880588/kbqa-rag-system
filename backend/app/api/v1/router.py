@@ -2,12 +2,30 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, chat, documents, health, knowledge_bases, sessions, users
+from app.api.v1 import (
+    api_keys,
+    auth,
+    chat,
+    documents,
+    health,
+    knowledge_bases,
+    open_api,
+    organizations,
+    query_logs,
+    quotas,
+    sessions,
+    users,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
+api_router.include_router(organizations.router)
+api_router.include_router(quotas.router)
+api_router.include_router(query_logs.router)
+api_router.include_router(api_keys.router)
+api_router.include_router(open_api.router)
 api_router.include_router(knowledge_bases.router)
 api_router.include_router(documents.router)
 api_router.include_router(sessions.router)
