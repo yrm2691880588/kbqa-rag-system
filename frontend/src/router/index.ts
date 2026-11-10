@@ -33,8 +33,29 @@ const router = createRouter({
           // 管理页占位：M2 起填充知识库管理/检索测试/看板
           path: 'admin',
           name: 'admin',
-          component: () => import('@/views/AdminPlaceholderView.vue'),
+          component: () => import('@/views/KnowledgeBaseView.vue'),
           meta: { title: '知识库管理', requiresAuth: true, requiresAdmin: true },
+        },
+        {
+          // 成员管理（P1-C）：组织管理员管本组织的人
+          path: 'members',
+          name: 'members',
+          component: () => import('@/views/MembersView.vue'),
+          meta: { title: '成员管理', requiresAuth: true, requiresAdmin: true },
+        },
+        {
+          // 问答日志（P1-C）：看哪些问题没答上，是补资料的依据
+          path: 'query-logs',
+          name: 'query-logs',
+          component: () => import('@/views/QueryLogView.vue'),
+          meta: { title: '问答日志', requiresAuth: true, requiresAdmin: true },
+        },
+        {
+          // 组织管理：只有平台超管能进（建客户组织、发邀请码）
+          path: 'orgs',
+          name: 'orgs',
+          component: () => import('@/views/OrgManageView.vue'),
+          meta: { title: '组织管理', requiresAuth: true, requiresSuperadmin: true },
         },
       ],
     },
@@ -68,7 +89,14 @@ router.beforeEach(async (to) => {
   }
 
   // 4) 页面要求管理员，但当前是普通用户 → 回到问答页
-  if (to.meta.requiresAdmin && auth.user?.role !== 'admin') {
+  //    注意：平台超管也是 admin，所以这里用 isAdmin（含超管）判断，避免超管被挡在外面
+  if (to.meta.requiresAdmin && !auth.isAdmin) {
+    return '/chat'
+  }
+
+  // 5) 页面要求平台超管，但当前不是 → 回到问答页
+  //    超管是"跨组织"的角色（建客户组织），普通组织管理员不能进，否则隔离形同虚设
+  if (to.meta.requiresSuperadmin && !auth.isSuperadmin) {
     return '/chat'
   }
   return true

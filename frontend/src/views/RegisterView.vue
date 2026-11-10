@@ -15,6 +15,17 @@
         <el-form-item prop="nickname">
           <el-input v-model="form.nickname" placeholder="昵称（可选，默认同用户名）" :prefix-icon="Postcard" />
         </el-form-item>
+
+        <!-- 组织邀请码：决定你注册后进入哪家公司（组织）的工作空间 -->
+        <el-form-item prop="inviteCode">
+          <el-input
+            v-model="form.inviteCode"
+            :placeholder="invitePlaceholder"
+            :prefix-icon="Ticket"
+            maxlength="32"
+          />
+          <div class="field-hint">{{ inviteHint }}</div>
+        </el-form-item>
         <el-form-item prop="password">
           <el-input
             v-model="form.password"
@@ -67,7 +78,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { User, Lock, Postcard, UserFilled } from '@element-plus/icons-vue'
+import { User, Lock, Postcard, UserFilled, Ticket } from '@element-plus/icons-vue'
 import * as authApi from '@/api/auth'
 import { checkPassword } from '@/utils/password'
 
@@ -75,7 +86,27 @@ const router = useRouter()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const captchaImg = ref('')
-const form = reactive({ username: '', nickname: '', password: '', confirm: '', captchaId: '', captchaCode: '' })
+// 注册策略：由后端告知"邀请码是否必填"（私有部署选填 / 对外 SaaS 必填）
+const inviteRequired = ref(false)
+const form = reactive({
+  username: '',
+  nickname: '',
+  inviteCode: '',
+  password: '',
+  confirm: '',
+  captchaId: '',
+  captchaCode: '',
+})
+
+// 邀请码输入框的提示：随后端策略变化，避免用户"填不填都心慌"
+const invitePlaceholder = computed(() =>
+  inviteRequired.value ? '组织邀请码（必填）' : '组织邀请码（选填，没有可留空）',
+)
+const inviteHint = computed(() =>
+  inviteRequired.value
+    ? '本系统需要邀请码才能注册，请向你的管理员索取'
+    : '如果你是被公司/团队邀请使用的，请填写管理员提供的邀请码；个人试用可留空',
+)
 
 // 密码强度即时反馈
 const pwCheck = computed(() => checkPassword(form.password, form.username))
@@ -98,6 +129,19 @@ const rules: FormRules = {
     { pattern: /^[a-zA-Z0-9_]{3,32}$/, message: '3-32位字母/数字/下划线', trigger: 'blur' },
   ],
   nickname: [{ max: 32, message: '昵称最长 32 字', trigger: 'blur' }],
+  inviteCode: [
+    {
+      // 只有后端明确要求时才强制填写（私有部署下留空是合法的）
+      validator: (_r, v: string, cb) => {
+        if (inviteRequired.value && !String(v || '').trim()) {
+          cb(new Error('本系统需要组织邀请码，请向管理员索取'))
+        } else {
+          cb()
+        }
+      },
+      trigger: 'blur',
+    },
+  ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
     {
@@ -145,7 +189,14 @@ async function submit() {
   if (!valid) return
   loading.value = true
   try {
-    await authApi.register(form.username, form.password, form.nickname, form.captchaId, form.captchaCode)
+    await authApi.register(
+      form.username,
+      form.password,
+      form.nickname,
+      form.captchaId,
+      form.captchaCode,
+      form.inviteCode.trim(),
+    )
     ElMessage.success('注册成功，请登录')
     router.push('/login')
   } catch {
@@ -156,7 +207,20 @@ async function submit() {
   }
 }
 
-onMounted(loadCaptcha)
+/** 拉取注册策略：邀请码选填还是必填（拿不到就按"选填"处理，不影响注册） */
+async function loadRegisterPolicy() {
+  try {
+    const p = await authApi.getRegisterPolicy()
+    inviteRequired.value = !!p.invite_required
+  } catch {
+    inviteRequired.value = false
+  }
+}
+
+onMounted(() => {
+  loadCaptcha()
+  loadRegisterPolicy()
+})
 </script>
 
 <style scoped>
@@ -196,6 +260,14 @@ onMounted(loadCaptcha)
 .submit {
   width: 100%;
   margin-top: 6px;
+}
+
+/* 邀请码下方的说明文字 */
+.field-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+  margin-top: 4px;
 }
 
 .footer {

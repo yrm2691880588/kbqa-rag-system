@@ -89,6 +89,11 @@
                   <span class="dot"></span><span class="dot"></span><span class="dot"></span>
                   <span class="thinking-label">{{ m.thinkingLabel }}</span>
                 </div>
+                <!-- 内容安全提示：这条回答被系统处理过，说清楚"为什么"比闷着不解释好 -->
+                <div v-if="m.blocked" class="blocked-tip">
+                  <el-icon><WarningFilled /></el-icon>
+                  该回答已被内容安全策略处理
+                </div>
                 <!-- 用 v-html 渲染带 [n] 角标的回答 -->
                 <div class="answer" @click="onAnswerClick" v-html="renderAnswer(m.content, m.noHit)" />
                 <!-- 引用条目（回答下方列出来源） -->
@@ -175,11 +180,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ChatDotRound, Delete, EditPen, Plus, Promotion, Top, Bottom, VideoPause,
+  ChatDotRound, Delete, EditPen, Plus, Promotion, Top, Bottom, VideoPause, WarningFilled,
 } from '@element-plus/icons-vue'
 import { listKBs, type KnowledgeBase } from '@/api/kb'
 import {
   createSession, deleteSession, listMessages, listSessions, renameSession,
+  setMessageFeedback,
   streamChat, type ChatMessage, type ChatSession, type Citation,
 } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -207,6 +213,7 @@ interface MsgItem {
   noHit: boolean
   noHitText: string
   thinkingLabel: string
+  blocked: boolean // 内容安全命中：这条回答被系统处理过（界面上给个提示）
   msgId?: number // 已入库消息的真实 id（历史加载时）
 }
 
@@ -297,6 +304,7 @@ function toMsgItem(m: ChatMessage): MsgItem {
     noHit: false,
     noHitText: '',
     thinkingLabel: '',
+    blocked: false,
     msgId: m.id,
   }
 }
@@ -347,11 +355,13 @@ async function send() {
   displayMessages.value.push({
     key: uKey, role: 'user', content: q, thinking: '', showThink: false,
     citations: null, feedback: null, typing: false, noHit: false, noHitText: '', thinkingLabel: '',
+    blocked: false,
   })
   const aiItem: MsgItem = {
     key: aKey, role: 'assistant', content: '', thinking: '', showThink: false,
     citations: null, feedback: null, typing: true, noHit: false, noHitText: '',
     thinkingLabel: '正在思考',
+    blocked: false,
   }
   displayMessages.value.push(aiItem)
   await scrollBottom(true)
@@ -399,6 +409,20 @@ async function send() {
           finishSending() // ✅ 关键修复：正常回答完毕时关闭全局 sending 状态
           break
         }
+        case 'saved':
+          // 后端告知刚落库的回答编号：补上之后，这条回答才能被点赞/点踩
+          item.msgId = ev.message_id
+          break
+        case 'blocked':
+          // 内容安全命中：后端已经停止生成，并把"该显示什么"算好了（可能是标准提示语，
+          // 也可能是把敏感处打码后的原文）。这里必须**整体覆盖**已显示的内容——
+          // 因为违规文字刚才已经流到屏幕上了，只追加不覆盖等于没拦。
+          item.content = ev.text
+          item.blocked = true
+          item.typing = false
+          finishSending()
+          loadSessions().catch(() => {})
+          break
         case 'error':
           errorMsg = ev.message
           if (!item.content) {
@@ -489,11 +513,27 @@ function toggleThink(key: string) {
   if (m) m.showThink = !m.showThink
 }
 
-/** 用户反馈（赞/踩）——后端反馈接口在 M4 完善，先本地记录展示 */
-const feedbackSupported = false
-function setFeedback(m: MsgItem, v: number) {
-  m.feedback = m.feedback === v ? null : v
+/** 用户反馈（赞/踩）：落库保存，供管理员在后台看"哪些回答没答好" */
+const feedbackSupported = true
+async function setFeedback(m: MsgItem, v: number) {
+  // 点同一侧 = 取消（互斥：赞和踩只能留一个）
+  const next = m.feedback === v ? 0 : v
+  const prev = m.feedback          // 记下原值，请求失败时回滚，避免界面和库里对不上
+  m.feedback = next === 0 ? null : next
   if (!feedbackSupported) return
+
+  // 刚生成完的回答，编号可能还没送达（后端 saved 事件在路上）；
+  // 这时先不做乐观更新以外的动作，避免把请求发到一个不存在的 id 上
+  if (!m.msgId || !currentSession.value) {
+    m.feedback = prev
+    ElMessage.warning('回答还在保存中，请稍候一秒再点')
+    return
+  }
+  try {
+    await setMessageFeedback(currentSession.value.id, m.msgId, next)
+  } catch {
+    m.feedback = prev // 回滚：不能让界面显示"已点赞"但库里其实没记上
+  }
 }
 
 function quickAsk(q: string) {
@@ -867,6 +907,20 @@ function fmtTime(t?: string) {
   margin-top: 8px;
   font-size: 13px;
   color: #e6a23c;
+}
+
+/* 内容安全提示条：说明这条回答被系统处理过，避免用户以为是系统坏了 */
+.blocked-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+  color: #c0392b;
+  background: #fdecea;
+  border: 1px solid #f3c8c1;
+  border-radius: 6px;
 }
 
 .feedback {

@@ -13,6 +13,10 @@ export interface UserInfo {
   role: 'admin' | 'user'
   is_active: boolean
   phone?: string | null
+  /** 所属组织（客户公司）id；平台超管可能为空 */
+  org_id?: number | null
+  /** 是否平台超管（系统运营方，能建/管所有组织） */
+  is_superadmin?: boolean
   created_at: string
   last_login_at?: string | null
 }
@@ -40,6 +44,11 @@ export const useAuthStore = defineStore('auth', () => {
   // 【修复】之前路由守卫里用 auth.accessToken 但这里从未暴露过该属性，
   // 导致守卫永远认为"未登录"，登录后跳转 /chat 总被弹回 /login。
   const accessToken = computed(() => tokens.value?.access_token || '')
+
+  // 是否平台超管（能建组织、能看所有组织）——决定侧边栏要不要出现"组织管理"
+  const isSuperadmin = computed(() => !!user.value?.is_superadmin)
+  // 是否是管理员（含平台超管）：能进知识库管理页
+  const isAdmin = computed(() => user.value?.role === 'admin' || isSuperadmin.value)
 
   function saveTokens(t: Tokens) {
     tokens.value = t
@@ -118,6 +127,8 @@ export const useAuthStore = defineStore('auth', () => {
     tokens,
     user,
     accessToken,
+    isSuperadmin,
+    isAdmin,
     login,
     loginBySms,
     applyLogin,

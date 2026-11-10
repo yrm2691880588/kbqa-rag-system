@@ -19,6 +19,9 @@
               <el-input v-model="pwdForm.password" type="password" show-password placeholder="密码" :prefix-icon="Lock" />
             </el-form-item>
             <el-button type="primary" class="submit" :loading="pwdLoading" @click="submitPwd">登 录</el-button>
+            <div class="extra-row">
+              <el-button link type="primary" @click="openForgot">忘记密码？</el-button>
+            </div>
           </el-form>
         </el-tab-pane>
 
@@ -74,6 +77,68 @@
         <router-link to="/register">立即注册</router-link>
       </div>
     </el-card>
+
+    <!-- ============ 忘记密码：手机号 + 短信验证码 自助重置 ============ -->
+    <el-dialog v-model="forgotVisible" title="重置密码" width="420px" @closed="onForgotClosed">
+      <p class="forgot-tip">
+        请输入<strong>已绑定的手机号</strong>，我们会给该号码发送一条验证码，验证通过后即可设置新密码。
+        若忘记当初绑定的号码，请联系管理员重置。
+      </p>
+      <el-form ref="forgotFormRef" :model="forgotForm" :rules="forgotRules" label-position="top">
+        <el-form-item label="手机号" prop="phone">
+          <el-input v-model="forgotForm.phone" placeholder="11 位手机号" maxlength="11" :prefix-icon="Iphone" />
+        </el-form-item>
+
+        <el-form-item label="图形验证码" prop="captchaCode">
+          <div class="captcha-row">
+            <el-input v-model="forgotForm.captchaCode" placeholder="图形验证码" maxlength="4" class="captcha-input" />
+            <div class="captcha-img" title="看不清？点击换一张" @click="loadForgotCaptcha">
+              <img v-if="forgotCaptchaImg" :src="forgotCaptchaImg" alt="验证码" />
+              <span v-else class="captcha-loading">加载中…</span>
+            </div>
+            <el-button text type="primary" :disabled="!forgotCaptchaImg" @click="loadForgotCaptcha">换一张</el-button>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="短信验证码" prop="code">
+          <div class="sms-row">
+            <el-input v-model="forgotForm.code" placeholder="短信验证码" maxlength="6" :prefix-icon="Message" />
+            <el-button
+              class="send-btn"
+              :disabled="forgotCountdown > 0 || !forgotCaptchaImg"
+              :loading="forgotSending"
+              @click="sendForgotCode"
+            >
+              {{ forgotCountdown > 0 ? `${forgotCountdown}s 后重发` : '获取验证码' }}
+            </el-button>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="新密码" prop="newPassword">
+          <el-input
+            v-model="forgotForm.newPassword"
+            type="password"
+            show-password
+            placeholder="至少 8 位，需同时含字母和数字"
+            :prefix-icon="Lock"
+          />
+        </el-form-item>
+
+        <el-alert
+          v-if="forgotDevCode"
+          :title="`测试模式：短信验证码为 ${forgotDevCode}（正式上线后不再显示）`"
+          type="info"
+          :closable="false"
+          show-icon
+          class="dev-hint"
+        />
+      </el-form>
+
+      <template #footer>
+        <el-button @click="forgotVisible = false">取消</el-button>
+        <el-button type="primary" :loading="forgotLoading" @click="submitForgot">确认重置</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -201,6 +266,112 @@ function redirectTo() {
   }, 300)
 }
 
+// ---------- 忘记密码（手机号 + 短信验证码 自助重置）----------
+const forgotVisible = ref(false)
+const forgotFormRef = ref<FormInstance>()
+const forgotLoading = ref(false)
+const forgotSending = ref(false)
+const forgotForm = reactive({ phone: '', captchaId: '', captchaCode: '', code: '', newPassword: '' })
+const forgotCaptchaImg = ref('')
+const forgotCountdown = ref(0)
+const forgotDevCode = ref('')
+let forgotTimer: number | undefined
+
+const forgotRules: FormRules = {
+  phone: [
+    { required: true, message: '请输入手机号', trigger: 'blur' },
+    { pattern: phonePattern, message: '手机号格式不正确', trigger: 'blur' },
+  ],
+  captchaCode: [{ required: true, message: '请先输入图形验证码', trigger: 'blur' }],
+  code: [
+    { required: true, message: '请输入短信验证码', trigger: 'blur' },
+    { min: 4, message: '验证码至少 4 位', trigger: 'blur' },
+  ],
+  // 前端只做最基本的长度提示；真正的强度规则（含不含用户名等）由后端说了算，
+  // 前端不重复实现，避免两边规则不一致——改了后端忘了改前端就会出现"前端说行、后端说不行"
+  newPassword: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 8, message: '密码至少 8 位', trigger: 'blur' },
+  ],
+}
+
+function openForgot() {
+  // 每次打开都清空，避免上次输了一半的手机号/密码留在框里
+  forgotForm.phone = ''
+  forgotForm.captchaId = ''
+  forgotForm.captchaCode = ''
+  forgotForm.code = ''
+  forgotForm.newPassword = ''
+  forgotDevCode.value = ''
+  forgotCountdown.value = 0
+  if (forgotTimer) { window.clearInterval(forgotTimer); forgotTimer = undefined }
+  forgotVisible.value = true
+  loadForgotCaptcha()
+}
+
+function onForgotClosed() {
+  if (forgotTimer) { window.clearInterval(forgotTimer); forgotTimer = undefined }
+}
+
+async function loadForgotCaptcha() {
+  forgotCaptchaImg.value = ''
+  forgotForm.captchaCode = ''
+  try {
+    const data = await authApi.getCaptcha()
+    forgotForm.captchaId = data.captcha_id
+    forgotCaptchaImg.value = data.image_base64
+  } catch {
+    forgotCaptchaImg.value = ''
+  }
+}
+
+async function sendForgotCode() {
+  const valid = await forgotFormRef.value?.validateField(['phone', 'captchaCode']).catch(() => false)
+  if (!valid || !forgotForm.captchaId) return
+  forgotSending.value = true
+  try {
+    const res = await authApi.forgotPassword(forgotForm.phone, forgotForm.captchaId, forgotForm.captchaCode)
+    forgotDevCode.value = res.dev_code || ''
+    // 注意这里用的是后端返回的提示，不是前端自己拼的话术：
+    // 后端对"手机号是否注册过"返回的是同一句话，前端照抄即可，不额外加工
+    ElMessage.success(res.message)
+    startForgotCountdown(res.retry_after || 60)
+  } finally {
+    forgotSending.value = false
+    loadForgotCaptcha() // 图形码已消费，换一张新的
+  }
+}
+
+function startForgotCountdown(seconds: number) {
+  forgotCountdown.value = seconds
+  forgotTimer = window.setInterval(() => {
+    forgotCountdown.value -= 1
+    if (forgotCountdown.value <= 0) {
+      window.clearInterval(forgotTimer)
+      forgotTimer = undefined
+      forgotCountdown.value = 0
+    }
+  }, 1000)
+}
+
+async function submitForgot() {
+  const valid = await forgotFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+  forgotLoading.value = true
+  try {
+    const res = await authApi.resetPassword(forgotForm.phone, forgotForm.code, forgotForm.newPassword)
+    ElMessage.success(res.message)
+    forgotVisible.value = false
+    // 顺手把手机号带进密码登录框，用户少输一次
+    pwdForm.username = ''
+    pwdForm.password = ''
+  } catch (err: any) {
+    if (!err?.response?.data?.detail) ElMessage.error(err?.message || '重置失败')
+  } finally {
+    forgotLoading.value = false
+  }
+}
+
 onMounted(() => {
   // 预加载一张图形验证码（切到手机号登录就能直接用）
   loadCaptcha()
@@ -244,6 +415,20 @@ onMounted(() => {
 .submit {
   width: 100%;
   margin-top: 6px;
+}
+
+/* "忘记密码"一行：右对齐，不抢主按钮的视觉重心 */
+.extra-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.forgot-tip {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #606266;
 }
 
 .footer {

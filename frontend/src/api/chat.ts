@@ -51,6 +51,22 @@ export function listMessages(sessionId: number) {
   return http.get<ChatMessage[]>(`/sessions/${sessionId}/messages`)
 }
 
+/**
+ * 给某条 AI 回答打「赞 / 踩 / 取消」。
+ * feedback：1=赞，-1=踩，0=取消之前的评价。
+ */
+export function setMessageFeedback(
+  sessionId: number,
+  messageId: number,
+  feedback: number,
+  note?: string,
+) {
+  return http.post<ChatMessage>(`/sessions/${sessionId}/messages/${messageId}/feedback`, {
+    feedback,
+    note: note ?? null,
+  })
+}
+
 // ---- SSE 流式问答 ----
 export type StreamEvent =
   | { type: 'meta'; citations: Citation[] }
@@ -58,6 +74,10 @@ export type StreamEvent =
   | { type: 'answer'; text: string }
   | { type: 'no_hit'; message: string; citations: Citation[] }
   | { type: 'done'; latency_ms?: number }
+  // 后端把刚落库的回答编号回传，前端据此才能给"这一轮"的回答点赞/点踩
+  | { type: 'saved'; message_id: number }
+  // 回答命中内容安全策略：后端已停止生成，前端要用 text 把已显示的内容整体覆盖掉
+  | { type: 'blocked'; text: string; mode: string }
   | { type: 'error'; message: string }
 
 /**
@@ -142,6 +162,12 @@ export function streamChat(
                 break
               case 'done':
                 onEvent({ type: 'done', latency_ms: data.latency_ms })
+                break
+              case 'saved':
+                onEvent({ type: 'saved', message_id: Number(data.message_id) })
+                break
+              case 'blocked':
+                onEvent({ type: 'blocked', text: data.text ?? '', mode: data.mode ?? 'replace' })
                 break
               case 'error':
                 onEvent({ type: 'error', message: data.message ?? '生成失败' })

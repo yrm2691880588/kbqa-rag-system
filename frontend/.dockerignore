@@ -1,0 +1,15 @@
+# 构建镜像时排除（node_modules 绝不能进构建上下文，否则上传几百 MB）
+node_modules/
+dist/
+.vite/
+*.log
+
+# 本地环境文件
+.env
+.env.*
+!.env.example
+
+# 编辑器与系统文件
+.idea/
+.vscode/
+.DS_Store
