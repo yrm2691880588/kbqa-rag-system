@@ -16,6 +16,22 @@ jobs:
   backend:
     name: 后端测试
     runs-on: ubuntu-latest
+    # 起一个真实 PostgreSQL：并发额度测试必须跑在真数据库上才有意义。
+    # SQLite 内存库是单连接，并发请求实际是排队的，永远测不出竞态。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kbqa
+          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_DB: kbqa_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kbqa -d kbqa_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +63,9 @@ jobs:
           # 真正的密钥只存在于开发者本地 .env，从不进入仓库。
           LLM_API_KEY: "ci-fake-key-not-real"
           EMBEDDING_API_KEY: "ci-fake-key-not-real"
+          # 指向上面 services 起的真实 PostgreSQL，让并发额度测试真正执行
+          # （不设这一项，那 2 个并发用例会被 skip —— 等于没测）
+          KBQA_TEST_PG_URL: "postgresql+asyncpg://kbqa:ci-test-password@127.0.0.1:5432/kbqa_test"
         run: python -m unittest discover -s tests -t . -v
 
   # ---------------- 前端：类型检查 + 构建 ----------------
