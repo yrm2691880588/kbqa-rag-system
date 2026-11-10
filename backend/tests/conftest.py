@@ -36,3 +36,11 @@ settings.qa_cache_enabled = False
 
 # 3) 关掉分钟级限流：否则同一批用例跑得快时会被自己限流，报出一堆无关的 429
 settings.ai_rate_limit_per_minute = 0
+
+# 4) 关掉压测专用的 mock 开关
+#    为什么必须关：LLM_MOCK 是"压测时用假回答省钱"的开关，一旦为 True，
+#    启动自检在生产环境下会报「LLM_MOCK 处于开启状态」这条 error。
+#    而 test_sms 等用例会构造 app_env="prod" 的配置去验证启动检查，
+#    于是那条与短信毫无关系的 error 混进了断言里，造成假失败。
+#    测试代码不该继承任何"压测/临时调试"性质的开关。
+settings.llm_mock = False

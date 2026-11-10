@@ -513,6 +513,11 @@ class StartupCheckSmsTestCase(unittest.TestCase):
 
     def _issues(self, **kwargs):
         cfg = sc.Settings()
+        # 本用例只关心短信通道的启动检查，与压测用的 LLM_MOCK 开关无关。
+        # 但 CI 环境可能设置了 LLM_MOCK=true（作为"禁止真调大模型"的保险），
+        # 而它在生产环境下会额外产生一条 error，混进下面"不该有 mock 相关 error"
+        # 的断言里造成假失败。这里显式关掉，让用例只验证自己想验证的那件事。
+        cfg.llm_mock = False
         for k, v in kwargs.items():
             setattr(cfg, k, v)
         return sc.collect_startup_issues(cfg)

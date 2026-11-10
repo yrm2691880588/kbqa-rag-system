@@ -181,8 +181,15 @@ class PoolStatusTestCase(unittest.TestCase):
 
 
 class ConfiguredPoolSettingsTestCase(unittest.TestCase):
-    """池子参数要真的被读进引擎，而不是加了个配置没人用。"""
+    """池子参数要真的被读进引擎，而不是加了个配置没人用。
 
+    ⚠️ 只对 PostgreSQL 有意义：
+        SQLite（测试/CI 环境用的内存库）走的是 StaticPool，根本没有
+        pool_size / max_overflow 这些概念，`pool.size()` 方法也不存在。
+        在 SQLite 下跳过，而不是让用例报一个与配置无关的 AttributeError。
+    """
+
+    @unittest.skipIf(settings.is_sqlite, "SQLite 使用 StaticPool，没有连接池参数可验")
     def test_engine_uses_configured_pool_params(self):
         import importlib
 
