@@ -154,6 +154,67 @@ async def _bump(
         await db.commit()
 
 
+async def _try_consume_question(
+    db: AsyncSession,
+    org_id: int,
+    day: dt.date,
+    *,
+    d_limit: int | None,
+    m_limit: int | None,
+) -> bool:
+    """原子地"检查+扣减一次提问"：没超额则扣减成功返回 True，超额返回 False。
+
+    为什么必须做成一条 SQL：
+        原始写法是"查用量 → 在 Python 里比上限 → 再调 _bump 加一"。
+        这三步之间没有任何锁，两个并发请求会同时看到旧用量、同时判定"没超"，
+        结果就是双双放行 —— 额度上限形同虚设。
+        把"上限判断"塞进 UPDATE 的 WHERE 里，由数据库在行锁内一次性完成
+        "读当前值 + 比较 + 加一"，并发请求就会自然排队，只有真正没超的那个成功。
+
+    日/月两个维度任一超额都不算成功。月用量单独查（跨多行汇总），
+    这里把它作为 UPDATE 的额外守卫条件传入。
+    """
+    values = {"questions": UsageDaily.questions + 1}
+    conds = [UsageDaily.org_id == org_id, UsageDaily.day == day]
+    if d_limit is not None:
+        # 允许"已用量 < 上限"才加。注意用 < 而非 <=：
+        # 上限 3 表示最多问 3 次，当前 2 时可以加（变成 3），当前 3 时不能加。
+        conds.append(UsageDaily.questions < d_limit)
+
+    res = await db.execute(
+        update(UsageDaily).where(*conds).values(**values)
+    )
+    if res.rowcount > 0:
+        await db.commit()
+        return True
+
+    # 没命中行有两种可能：
+    #   ① 今天还没有用量行（第一次提问）→ 需要新建；
+    #   ② 已超额 → 返回 False。
+    existing = await get_daily_usage(db, org_id, day)
+    if existing is None:
+        # 月上限也要在插入前检查一次，避免"新的一天才绕开月限额"
+        if m_limit is not None:
+            month = await get_month_usage(db, org_id)
+            if month["questions"] >= m_limit:
+                return False
+        if d_limit is not None and d_limit <= 0:
+            return False
+        try:
+            db.add(UsageDaily(org_id=org_id, day=day, questions=1))
+            await db.commit()
+            return True
+        except IntegrityError:
+            # 并发下被别人抢先插入了：退回"条件累加"这条路径
+            await db.rollback()
+            res2 = await db.execute(
+                update(UsageDaily).where(*conds).values(**values)
+            )
+            await db.commit()
+            return res2.rowcount > 0
+    return False
+
+
 async def get_daily_usage(db: AsyncSession, org_id: int, day: dt.date | None = None) -> UsageDaily | None:
     """取某天（默认今天）的用量行。"""
     d = day or today_local()
@@ -257,8 +318,36 @@ async def check_and_consume_question(db: AsyncSession, org_id: int | None) -> Qu
             monthly_used=m_used, monthly_limit=m_limit,
         )
 
-    # 判定通过 → 先扣一次（先扣后用，见文件头"取舍一"）
-    await _bump(db, org_id, today_local(), questions=1)
+    # 判定通过 → 原子扣一次（先扣后用，见文件头"取舍一"）。
+    # ⚠️ 为什么不能只靠上面的判断：上面的"读用量 → 比较上限"不是原子的。
+    # 两个并发请求可能同时读到 d_used = limit-1，都判定"没超"，于是都放行，
+    # 实际用了 limit+1 次。真正的把关在下面这条带条件的 UPDATE 里：
+    # 只有"当前用量仍低于上限"时它才会命中行，否则 rowcount=0 即视为超额。
+    ok = await _try_consume_question(
+        db, org_id, today_local(), d_limit=d_limit, m_limit=m_limit
+    )
+    if not ok:
+        # 走到这里说明在"判断之后、扣减之前"被并发请求抢先用掉了额度。
+        # 重新读一次真实用量，给出准确的提示文案。
+        daily2 = await get_daily_usage(db, org_id)
+        month2 = await get_month_usage(db, org_id)
+        d_used2 = daily2.questions if daily2 else 0
+        m_used2 = month2["questions"]
+        if _over(d_used2, d_limit):
+            return QuotaDecision(
+                allowed=False,
+                reason=f"今日提问次数已用完（{d_used2}/{d_limit}），请明天再试或联系管理员提升额度",
+                status_code=429,
+                daily_used=d_used2, daily_limit=d_limit,
+                monthly_used=m_used2, monthly_limit=m_limit,
+            )
+        return QuotaDecision(
+            allowed=False,
+            reason=f"本月提问次数已用完（{m_used2}/{m_limit}），请联系管理员提升额度",
+            status_code=402,
+            daily_used=d_used2, daily_limit=d_limit,
+            monthly_used=m_used2, monthly_limit=m_limit,
+        )
     return QuotaDecision(
         allowed=True,
         daily_used=d_used + 1, daily_limit=d_limit,

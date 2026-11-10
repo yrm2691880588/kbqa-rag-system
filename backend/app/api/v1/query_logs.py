@@ -26,8 +26,19 @@ router = APIRouter(prefix="/query-logs", tags=["问答日志"])
 
 
 def _scope_org(current_user: User) -> int | None:
-    """操作者能看的组织范围。None 代表"平台超管，不限"。"""
-    return None if getattr(current_user, "is_superadmin", False) else current_user.org_id
+    """操作者能看的组织范围。None 代表"平台超管，不限"。
+
+    ⚠️ 注意 None 有且只有一个含义：**平台超管**。
+    普通账号如果 org_id 为 None（例如组织被删后外键 SET NULL），
+    绝不能让它也返回 None —— 那等于把"不限"的权限发给了一个没归属的账号，
+    会看到全平台所有组织的问答日志（含客户真实问过的业务问题）。
+    这种情况改用 -1 作为"必然匹配不到任何数据"的哨兵值。
+    """
+    if getattr(current_user, "is_superadmin", False):
+        return None
+    if current_user.org_id is None:
+        return -1
+    return current_user.org_id
 
 
 @router.get("", response_model=list[QueryLogOut])

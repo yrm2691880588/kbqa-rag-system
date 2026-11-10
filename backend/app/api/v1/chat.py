@@ -12,6 +12,7 @@
 而生成器要在流中途写库），因此写库统一在生成器内部用独立会话完成。
 """
 
+import asyncio
 import datetime as dt
 import json
 import logging
@@ -265,7 +266,8 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                 # 3.5) 记账：把这一轮的 token 用量累加进当天用量。
                 #      放在提问次数之外单独记，是因为"次数"在提问那一刻已经扣过了，
                 #      而 token 要等回答生成完才知道有多少。
-                await quota.add_llm_tokens(adb, org_id, tokens_in, tokens_out)
+                #      注意：真正的记账已移到外层 finally 统一兜底（见下方），
+                #      这样客户端中途断开时也不会漏记。
 
                 # 4) 把刚落库这条回答的编号告诉前端。
                 #    为什么需要这一步：反馈接口要靠 message_id 定位"给哪条回答打分"，
@@ -274,10 +276,30 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                 #    放在 done 之后单独发一个事件，是为了不破坏既有前端的解析逻辑。
                 if assistant_msg_id is not None:
                     yield _sse("saved", {"message_id": assistant_msg_id})
+            except GeneratorExit:
+                # 客户端主动断开（关页面/点停止生成）时，生成器被关闭会抛这个。
+                # 不能当成错误处理，也不能向外 yield 任何东西（流已经没了）。
+                logger.info("客户端已断开，停止生成（token 用量在 finally 里补记）")
+                raise
+            except asyncio.CancelledError:
+                # 同上，但这是"服务端取消任务"的路径（如超时、进程退出）。
+                logger.info("问答流被取消（token 用量在 finally 里补记）")
+                raise
             except Exception:
                 logger.exception("问答流处理异常")
                 yield _sse("error", {"message": "服务内部错误，请稍后重试"})
                 yield _sse("done", {"latency_ms": int((time.time() - started) * 1000), "citations": []})
+            finally:
+                # 兜底记账：不管正常结束、异常、还是客户端中途断开，
+                # 只要这一轮真实产生了 token 消耗，就必须记进额度。
+                # 早期版本把记账放在 try 内部末尾，客户端一断开这段就被跳过 ——
+                # 提问次数已扣、token 却没记，等于"按 token 限流"可以被断连绕过。
+                try:
+                    if tokens_in or tokens_out:
+                        await quota.add_llm_tokens(adb, org_id, tokens_in, tokens_out)
+                except Exception:
+                    # 记账失败不能影响用户已经拿到的回答，记日志即可
+                    logger.exception("补记 token 用量失败（org_id=%s）", org_id)
 
     return StreamingResponse(
         event_gen(),

@@ -65,7 +65,11 @@ async def list_knowledge_bases(current_user: CurrentUser, db: DbSession, all: bo
     （注意：平台超管也只在"自己的组织"范围内看列表，需要跨组织请用组织管理接口。）
     """
     stmt = select(KnowledgeBase).order_by(KnowledgeBase.created_at.desc())
-    # 租户隔离：列表按组织过滤。user.org_id 为空则条件恒不成立 → 看不到任何库
+    # 租户隔离：列表按组织过滤。
+    # ⚠️ org_id 为 None 时必须显式返回空，不能依赖 `== None` ——
+    # SQLAlchemy 会把它渲染成 `org_id IS NULL`，反而把"无归属的历史库"暴露出来。
+    if current_user.org_id is None:
+        return []
     stmt = stmt.where(KnowledgeBase.org_id == current_user.org_id)
     if not all or current_user.role != "admin":
         stmt = stmt.where(KnowledgeBase.is_active.is_(True))

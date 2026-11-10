@@ -43,10 +43,17 @@ async def accessible_kb_ids(db: AsyncSession, user: User) -> list[int]:
     普通用户：只列本组织的库。
     平台超管：列全部库。
     """
-    stmt = select(KnowledgeBase.id)
     if not is_unrestricted(user):
-        # user.org_id 为 None（例如还没归入任何组织的账号）→ 条件恒不成立 → 什么也看不到
-        stmt = stmt.where(KnowledgeBase.org_id == user.org_id)
+        # ⚠️ 这里必须显式短路，不能直接写 `org_id == user.org_id`。
+        # 原因：SQLAlchemy 会把 `列 == None` 渲染成 `org_id IS NULL`，
+        # 于是"没归属组织的账号"反而能查到**所有 org_id 为 NULL 的历史库**——
+        # 与"什么也看不到"的意图正好相反，构成越权。
+        # users.org_id 外键是 ondelete=SET NULL，组织被删后账号就会落到这个分支。
+        if user.org_id is None:
+            return []
+        stmt = select(KnowledgeBase.id).where(KnowledgeBase.org_id == user.org_id)
+    else:
+        stmt = select(KnowledgeBase.id)
     rows = (await db.execute(stmt)).scalars().all()
     return list(rows)
 

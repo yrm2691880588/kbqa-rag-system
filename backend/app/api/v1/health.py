@@ -11,6 +11,7 @@
 
 from fastapi import APIRouter, Query, Response
 
+from app.core.deps import AdminUser
 from app.services.health_check import run_checks
 
 router = APIRouter(prefix="/health", tags=["健康检查"])
@@ -46,11 +47,17 @@ async def ready(response: Response):
 @router.get("/deep")
 async def deep(
     response: Response,
+    admin: AdminUser,
     llm: bool = Query(False, description="是否也真实调用一次对话模型（会产生极少量费用）"),
 ):
     """深度探活：真实调用向量服务（可选对话模型），用于验证密钥/网络确实可用。
 
     建议人工排查或定时巡检（如每小时一次）时使用，不要用于秒级轮询。
+
+    ⚠️ 为什么必须要求管理员登录：
+       这个端点会真的去调百炼/DeepSeek 接口，**每次都要花钱**。
+       如果它像 /live 那样对所有人开放，任何人都能反复刷它把你的配额烧光。
+       真正需要无人值守调用的只有 /live 与 /ready，那两个不碰外部服务，保持匿名。
     """
     data = await run_checks(deep=True, llm_call=llm)
     if not data["healthy"]:
