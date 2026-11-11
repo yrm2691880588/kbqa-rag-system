@@ -115,7 +115,7 @@ services:
     container_name: kbqa-frontend
     restart: unless-stopped
     ports:
-      - "80:80"      # 对外入口；配置 HTTPS 后改为 443（见 deploy/README.md 的 HTTPS 一节）
+      - "80:80"      # 对外入口；如需 HTTPS 请自行在反向代理层配置
     volumes:
       # 证书校验目录：申请 HTTPS 证书时 Let's Encrypt 会来取验证文件
       - certbot_www:/var/www/certbot:ro
@@ -138,8 +138,8 @@ volumes:
   pgdata:
     name: kbqa_pgdata
   uploads_data:
-    name: kbqa_uploads_data   # 上传的原文件（备份时需一并备份，详见 deploy/README.md）
-  # HTTPS 证书相关（启用 HTTPS 后才用得到，见 deploy/README.md）
+    name: kbqa_uploads_data   # 上传的原文件（备份数据库时需一并备份）
+  # HTTPS 证书相关（启用 HTTPS 后才用得到）
   certbot_www:
     name: kbqa_certbot_www
   letsencrypt:

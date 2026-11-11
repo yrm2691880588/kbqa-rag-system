@@ -104,7 +104,6 @@
 │       └── router/           # 路由守卫
 ├── 启动.bat                  # ⭐ 一键启动（双击即用）
 ├── 停止.bat                  # ⭐ 一键停止（双击即用，数据保留）
-├── scripts/                  # 分步启动脚本（需要单独控制某一步时用）
 │   ├── start-docker.bat      # ① 启动数据库容器
 │   ├── start-backend.bat     # ② 启动后端  (127.0.0.1:8000)
 │   ├── start-frontend.bat    # ③ 启动前端  (127.0.0.1:5173)
@@ -169,7 +168,7 @@ FRONTEND_PORT=5180
 
 ### 手动启动（4 步）
 
-> 需要自己控制每一步时用这个。脚本在 `scripts/` 目录。
+> 需要自己控制每一步时用这个。每一步都给了完整命令，复制即可。
 
 #### 0. 环境要求
 
@@ -194,7 +193,6 @@ copy .env.example .env        # Windows
 
 ```bash
 docker compose up -d
-# 或双击 scripts/start-docker.bat
 ```
 
 会启动两个容器：`kbqa-postgres`（5432）与 `kbqa-qdrant`（6333/6334）。
@@ -206,7 +204,7 @@ docker compose up -d
 python -m venv .venv
 .venv/Scripts/pip install -r backend/requirements.txt
 
-# 启动（或双击 scripts/start-backend.bat）
+# 启动后端
 # 端口与根目录 .env 的 BACKEND_PORT 保持一致（默认 8000）
 .venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -223,16 +221,14 @@ python -m venv .venv
 cd frontend
 npm install
 npm run dev
-# 或双击 scripts/start-frontend.bat
 ```
 
 浏览器打开 **http://127.0.0.1:5173** 即可使用（端口受 `.env` 的 `FRONTEND_PORT` 控制）。
 
-> 💡 分步脚本也可以组合用：`scripts/start-docker.bat` → `scripts/start-backend.bat` → `scripts/start-frontend.bat`。
-> 不过更推荐直接双击根目录的 **[启动.bat](启动.bat)**，它会按正确顺序自动做完这些并等每一步真正就绪。
->
-> （旧的 `scripts/start-all.bat` 已废弃：它只开前后端窗口、**不启动 Docker**，
-> 会让人误以为全都起来了，实际后端连不上数据库。现在双击它只会提示改用根目录脚本。）
+> 💡 如果你不想手动跑上面四步，直接双击根目录的 **[启动.bat](启动.bat)** 即可：
+> 它会按「Docker → 数据库 → 后端 → 前端 → 健康检查」的顺序自动完成，
+> 并等每一步真正就绪后才继续（不是简单地把窗口开起来）。
+> 关闭时双击 **[停止.bat](停止.bat)** 一键全停。
 
 ---
 
