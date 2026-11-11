@@ -86,6 +86,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: 前端单元测试
+        working-directory: frontend
+        run: npm test
+
       - name: 类型检查与构建
         working-directory: frontend
         run: npm run build

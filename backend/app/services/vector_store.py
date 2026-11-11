@@ -2,7 +2,9 @@
 
 设计约定：
 - 所有知识库共用一个集合（同一 embedding 模型、同维度），payload 带 kb_id/doc_id 过滤；
-- 向量点 ID 用 d{doc_id}-c{chunk_index}，同一文档重传时先按 doc_id 删除旧点再写入；
+- 向量点 ID 用 uuid5(NAMESPACE_DNS, "doc-{doc_id}-chunk-{i}") 生成确定性 UUID
+  （Qdrant 只接受整数或 UUID，不能用 "d12-c3" 这种字符串）。
+  同一文档重传时先按 doc_id 删除旧点再写入，保证幂等；
 - kb_id / doc_id 建了 payload 索引，过滤删除/检索都很快。
 """
 
@@ -14,6 +16,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    MatchAny,
     MatchValue,
     PayloadSchemaType,
     PointStruct,
@@ -111,16 +114,26 @@ async def upsert_document_chunks(
     return written
 
 
-async def delete_document_chunks(doc_id: int) -> int:
-    """按 doc_id 删除某文档的全部向量点（删文档 / 重传覆盖前调用）。返回删除点数。"""
+async def delete_document_chunks(doc_id: int) -> None:
+    """按 doc_id 删除某文档的全部向量点（删文档 / 重传覆盖前调用）。
+
+    关于返回值：
+        早期这里标注 `-> int`、docstring 写"返回删除点数"，
+        但实际返回的是 Qdrant 的 `res.status`（枚举/字符串），
+        类型与文档都对不上。
+
+        经核实：所有调用方（api/v1/documents.py、services/ingestion.py）
+        都只关心"删掉了"，**不使用返回值**；而 Qdrant 的 delete 接口
+        本身也不返回精确删除条数（只有操作状态）。
+        所以这里如实改成 `-> None`，避免误导后续调用方去用这个值。
+    """
     client = get_client()
-    res = await client.delete(
+    await client.delete(
         collection_name=settings.qdrant_collection,
         points_selector=Filter(
             must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
         ),
     )
-    return getattr(res, "status", None)
 
 
 async def delete_kb_chunks(kb_id: int) -> None:
@@ -213,12 +226,21 @@ async def search(
     must: list = []
     # 注意用 `is not None` 而不是真值判断，避免空列表被误当成"不限制"
     if kb_ids is not None:
-        must.append(
-            FieldCondition(
-                key="kb_id",
-                match=MatchValue(value=kb_ids[0] if len(kb_ids) == 1 else kb_ids),
-            )
+        # 单库用 MatchValue（精确等于），多库必须用 MatchAny（属于集合）。
+        #
+        # ⚠️ 这里曾经写错过：`MatchValue(value=kb_ids[0] if len==1 else kb_ids)`
+        #    想把列表塞进 MatchValue，但 MatchValue.value 的类型是
+        #    Union[StrictBool, StrictInt, StrictStr] —— 只接受**单个值**。
+        #    传 [1,2] 会抛 pydantic ValidationError（Input should be a valid boolean）。
+        #    后果：一个会话限定 ≥2 个知识库时检索直接崩。
+        #    网页端因为 ChatView 只传单库而侥幸没暴露，
+        #    但 /open/chat 传的是组织内全部库，必然触发。
+        match = (
+            MatchValue(value=kb_ids[0])
+            if len(kb_ids) == 1
+            else MatchAny(any=list(kb_ids))
         )
+        must.append(FieldCondition(key="kb_id", match=match))
     qfilter = Filter(must=must) if must else None
 
     res = await client.query_points(

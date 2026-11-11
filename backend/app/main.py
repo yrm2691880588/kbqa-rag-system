@@ -69,13 +69,20 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.expose_docs else None,
 )
 
-# 请求追踪：给每个请求一个编号，让"一次请求的所有日志"能串起来。
-# 注意中间件的顺序：后加的先执行。放在 CORS 之前加，让它包在最外层 ——
-# 这样连"被 CORS 拦掉的请求"也会有编号和访问日志（这类请求恰恰最需要排查：
-# 前端报"跨域失败"时，你得能看出请求到底有没有打到后端）。
-app.add_middleware(RequestContextMiddleware)
-
 # 跨域：只允许配置里的前端开发地址访问
+#
+# ⚠️ 中间件顺序（Starlette 的 add_middleware 是 insert(0)，后加的在**外层**）：
+#    最终执行顺序是「最后 add 的 -> 最先 add 的 -> 路由」。
+#    所以这里**先加 CORS、后加请求追踪**，才能让请求追踪包在最外层：
+#      请求进来 -> RequestContextMiddleware（发编号、记访问日志）
+#              -> CORSMiddleware（可能在这里直接拒掉）
+#              -> 路由
+#    这样连"被 CORS 拦掉的请求"也会有编号和访问日志 ——
+#    这类请求恰恰最需要排查：前端报"跨域失败"时，
+#    你得能看出请求到底有没有打到后端。
+#
+#    早期版本顺序反了（先加追踪、后加 CORS），结果是
+#    CORS 拒绝的请求完全没有日志，与下面注释想达到的效果正好相反。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -83,6 +90,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 请求追踪：给每个请求一个编号，让"一次请求的所有日志"能串起来。
+# 放在 CORS 之后 add，以便它位于最外层（见上方说明）。
+app.add_middleware(RequestContextMiddleware)
 
 # 挂载业务接口
 app.include_router(api_router, prefix=settings.api_prefix)

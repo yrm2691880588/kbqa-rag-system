@@ -45,6 +45,36 @@ async def _counts(db, org_id: int) -> tuple[int, int]:
     return int(members or 0), int(kbs or 0)
 
 
+async def _counts_bulk(db) -> tuple[dict[int, int], dict[int, int]]:
+    """一次性查出所有组织的成员数与知识库数。
+
+    为什么需要这个函数：
+        列表页是逐行渲染的，如果每行都调一次 _counts()，
+        有 20 家客户时这一页就要打 40 次查询（典型的 N+1）。
+        这里用两条 GROUP BY 把全部组织的计数一次性拿回来后按 org_id 索引。
+
+        早期版本在注释里写着"用两条聚合查询一次拿全，避免 N+1"，
+        但实际循环体里仍是 `for o in orgs: await _counts(db, o.id)` ——
+        注释与实现相反，N+1 一直在。
+    """
+    member_rows = (
+        await db.execute(
+            select(User.org_id, func.count()).where(User.org_id.isnot(None)).group_by(User.org_id)
+        )
+    ).all()
+    kb_rows = (
+        await db.execute(
+            select(KnowledgeBase.org_id, func.count())
+            .where(KnowledgeBase.org_id.isnot(None))
+            .group_by(KnowledgeBase.org_id)
+        )
+    ).all()
+    return (
+        {int(org_id): int(n or 0) for org_id, n in member_rows},
+        {int(org_id): int(n or 0) for org_id, n in kb_rows},
+    )
+
+
 async def _usage_and_quota_maps(db) -> tuple[dict[int, int], dict[int, object]]:
     """一次性把"各组织本月用量"和"各组织额度"查出来。
 
@@ -134,9 +164,12 @@ async def list_organizations(superadmin: SuperAdminUser, db: DbSession):
     """列出全部组织（平台超管），并带上本月用量与额度，方便一眼看出谁快用完了。"""
     orgs = (await db.execute(select(Organization).order_by(Organization.created_at.desc()))).scalars().all()
     usage_map, quota_map = await _usage_and_quota_maps(db)
+    # 成员数/知识库数一次批量取回（不是循环里逐个查，避免 N+1）
+    members_map, kbs_map = await _counts_bulk(db)
     out: list[OrgOut] = []
     for o in orgs:
-        m, k = await _counts(db, o.id)
+        m = members_map.get(o.id, 0)
+        k = kbs_map.get(o.id, 0)
         out.append(_org_out(o, m, k, usage_map, quota_map))
     return out
 

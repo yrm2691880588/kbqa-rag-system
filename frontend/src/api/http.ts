@@ -2,6 +2,7 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { shouldRefreshOn401, shouldShowErrorOn401 } from './authRetry'
 
 // 创建 axios 实例：所有请求走 /api 前缀（Vite 已配置转发到后端）
 const http = axios.create({
@@ -34,34 +35,19 @@ http.interceptors.response.use(
 
     const url = original?.url || ''
 
-    // ── 哪些 401 不该触发"续期"────────────────────────────────
-    // 1) 探测型请求（/users/me）：它的 401 表示"当前未登录"，是页面初始化的
-    //    正常状态。若也走续期+跳转，会在页面刚打开时打断渲染（白屏）。
-    //    交给 store 的 restoreSession 自己 catch。
-    const isProbe = url.includes('/users/me')
+    // ── 401 的分类判定 ────────────────────────────────────────
+    // 具体规则（哪些该续期、哪些该静默）已抽到 ./authRetry 纯函数里，
+    // 那里有单元测试锁着 —— 这段逻辑出过三次同类 bug，必须能测。
+    const status = error.response?.status
+    const canRetry = status === 401 && original && !original._retried
+    const allowRefresh =
+      canRetry &&
+      shouldRefreshOn401(url, {
+        isRefreshCall:
+          (original as { _isRefreshCall?: boolean } | undefined)?._isRefreshCall === true,
+      })
 
-    // 2) 鉴权入口请求（登录/注册/刷新/登出/找回密码）：它们的 401 是**业务结果**
-    //    （比如密码错了），不是"会话过期"。
-    //    如果把登录失败的 401 也拿去续期，会形成死循环：
-    //      登录401 -> 调refresh -> refresh也401 -> 又进这里 -> 再调refresh ...
-    //    表现就是点了登录之后按钮一直转圈、也不报错。
-    const isAuthEntry =
-      url.includes('/auth/login') ||
-      url.includes('/auth/register') ||
-      url.includes('/auth/refresh') ||
-      url.includes('/auth/logout') ||
-      url.includes('/auth/sms/login') ||
-      url.includes('/auth/password/')
-
-    // 3) 刷新请求自身发起的调用，绝不能再次触发刷新（双保险，防递归）
-    const flag = (original as { _isRefreshCall?: boolean } | undefined)?._isRefreshCall === true
-
-    const skipRefresh = isProbe || isAuthEntry || flag
-
-    // 只有"访问令牌过期"(401) 且该请求还没重试过、且不属于上面三类时，才续期。
-    // 注意：这里不再判断"本地有没有 refresh_token"——令牌在 Cookie 里，
-    // 前端读不到。刷新能否成功完全由后端判断（Cookie 里的刷新令牌是否有效）。
-    if (error.response?.status === 401 && original && !original._retried && !skipRefresh) {
+    if (allowRefresh) {
       if (refreshing) {
         // 已有请求在刷新：排队等它完成再重放
         return new Promise((resolve, reject) => {
@@ -86,10 +72,9 @@ http.interceptors.response.use(
     }
 
     // 业务错误信息展示（后端返回的 detail 是中文提示）。
-    // 探测型请求（isProbe）的 401 不弹窗：它代表"还没登录"，
-    // 是页面初始化的正常状态，弹红框只会让用户以为出错了。
-    // 但登录/注册这类**用户主动操作**必须弹——用户需要知道"密码错了"。
-    if (!isProbe) {
+    // 探测请求（精确的 /users/me）不弹窗：它代表"还没登录"，是正常状态。
+    // 但登录/注册、以及 /users/me/password 这类**用户主动操作**必须弹。
+    if (!(status === 401 && !shouldShowErrorOn401(url))) {
       const detail = (error.response?.data as { detail?: string } | undefined)?.detail
       if (detail) {
         ElMessage.error(detail)
