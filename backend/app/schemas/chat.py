@@ -41,6 +41,9 @@ class MessageOut(BaseModel):
     content: str
     citations: list | None = None   # assistant 回答的引用快照
     feedback: int | None = None
+    feedback_reason: str | None = None
+    feedback_note: str | None = None
+    feedback_at: dt.datetime | None = None
     created_at: dt.datetime
 
 
@@ -49,6 +52,28 @@ class ChatRequest(BaseModel):
 
     session_id: int = Field(description="会话 id（必须属于当前用户）")
     question: str = Field(min_length=1, max_length=2000, description="用户问题")
+
+
+# ============================================================
+# 反馈原因分类（点踩时选择）
+# ============================================================
+# 为什么要预定义而不是让用户自由填：
+#   自由文本没法聚合统计。有了固定分类，后台才能回答
+#   "最近大家主要在抱怨什么" —— 进而知道该补资料、该调检索、还是该换模型。
+#   自由文本仍然保留（feedback_note），用于看具体细节。
+#
+# 每个分类都对应一种**可行动的改进方向**，而不是笼统的"不满意"：
+FEEDBACK_REASONS: dict[str, str] = {
+    # key = 存进数据库的值（英文，稳定不变）
+    # value = 界面展示的中文
+    "inaccurate": "回答不准确",
+    "no_reference": "没有引用到相关资料",
+    "irrelevant": "答非所问",
+    "incomplete": "回答不完整",
+    "wrong_citation": "引用错了文档",
+    "outdated": "资料过时",
+    "other": "其他",
+}
 
 
 class FeedbackRequest(BaseModel):
@@ -65,7 +90,30 @@ class FeedbackRequest(BaseModel):
     """
 
     feedback: int = Field(description="1=赞 / -1=踩 / 0=取消评价")
-    note: str | None = Field(default=None, max_length=500, description="可选补充说明（踩的时候填）")
+    reason: str | None = Field(
+        default=None,
+        description="点踩时的原因分类，取值见 FEEDBACK_REASONS 的 key；赞时忽略",
+    )
+    note: str | None = Field(
+        default=None, max_length=500, description="可选补充说明（踩的时候填，自由文本）"
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def _check_reason(cls, v: str | None) -> str | None:
+        """原因必须是预定义的 key，否则拒绝。
+
+        为什么要校验：如果放开任意字符串，前端改一个字就可能写进一个
+        永远统计不到的脏值（比如 "inaccurate " 带空格）。校验后
+        数据库里只会出现这 7 个 key，聚合查询才可靠。
+        """
+        if v is None or v == "":
+            return None
+        if v not in FEEDBACK_REASONS:
+            raise ValueError(
+                f"未知的反馈原因 {v!r}，可选值：{', '.join(FEEDBACK_REASONS)}"
+            )
+        return v
 
     @field_validator("feedback")
     @classmethod

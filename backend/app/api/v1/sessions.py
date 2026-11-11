@@ -5,6 +5,7 @@
 管理员也不能看别人的会话。
 """
 
+import datetime as dt
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -153,9 +154,27 @@ async def set_message_feedback(
     if msg.role != "assistant":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "只能对 AI 回答进行评价")
 
-    # 落库：0 表示"取消评价"，存 NULL 而不是存 0，避免把"没评价"和"评价为 0"混在一起
-    msg.feedback = payload.feedback if payload.feedback != 0 else None
-    msg.feedback_note = (payload.note or None) if payload.feedback == -1 else None
+    # 落库：0 表示"取消评价"，存 NULL 而不是存 0，
+    # 避免把"没评价"和"评价为 0"混在一起。
+    if payload.feedback == 0:
+        # 取消评价：三个字段一起清空，不能只清 feedback 留下原因/说明 ——
+        # 那会变成"没有评价但有原因"的脏数据，后台统计时对不上。
+        msg.feedback = None
+        msg.feedback_reason = None
+        msg.feedback_note = None
+        msg.feedback_at = None
+    else:
+        msg.feedback = payload.feedback
+        # 原因与说明只在"踩"时保存：赞的时候用户没理由填这些，
+        # 就算前端传了也丢掉，避免出现"满意 + 抱怨原因"的矛盾记录。
+        if payload.feedback == -1:
+            msg.feedback_reason = payload.reason or None
+            msg.feedback_note = (payload.note or None)
+        else:
+            msg.feedback_reason = None
+            msg.feedback_note = None
+        msg.feedback_at = dt.datetime.now(dt.timezone.utc)
+
     await db.commit()
     await db.refresh(msg)
     return msg

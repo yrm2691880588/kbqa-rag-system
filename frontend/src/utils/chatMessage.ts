@@ -38,6 +38,8 @@ export interface MsgItem {
   showThink: boolean
   citations: CitationLike[] | null
   feedback: number | null
+  /** 点踩时选的原因（与后端 FEEDBACK_REASONS 的 key 对应） */
+  feedbackReason?: string | null
   typing: boolean
   noHit: boolean
   noHitText: string
@@ -66,6 +68,7 @@ export function toMsgItem(m: ApiMessageLike): MsgItem {
     showThink: false,
     citations: m.citations ?? null,
     feedback: m.feedback ?? null,
+    feedbackReason: null,
     typing: false,
     noHit: false,
     noHitText: '',
@@ -85,6 +88,7 @@ export function createTypingMessage(): MsgItem {
     showThink: false,
     citations: null,
     feedback: null,
+    feedbackReason: null,
     typing: true,
     noHit: false,
     noHitText: '',

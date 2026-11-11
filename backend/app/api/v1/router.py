@@ -7,6 +7,7 @@ from app.api.v1 import (
     auth,
     chat,
     documents,
+    feedbacks,
     health,
     knowledge_bases,
     open_api,
@@ -24,6 +25,7 @@ api_router.include_router(users.router)
 api_router.include_router(organizations.router)
 api_router.include_router(quotas.router)
 api_router.include_router(query_logs.router)
+api_router.include_router(feedbacks.router)
 api_router.include_router(api_keys.router)
 api_router.include_router(open_api.router)
 api_router.include_router(knowledge_bases.router)

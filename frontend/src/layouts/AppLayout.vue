@@ -37,6 +37,11 @@
           <el-icon><DataLine /></el-icon>
           <span>问答日志</span>
         </el-menu-item>
+        <!-- 用户反馈：点了踩之后具体哪里不对，是改进的最直接依据 -->
+        <el-menu-item v-if="auth.isAdmin && auth.user?.org_id" index="/feedbacks">
+          <el-icon><ChatLineSquare /></el-icon>
+          <span>用户反馈</span>
+        </el-menu-item>
         <!-- 组织管理入口：只有平台超管能看到 -->
         <el-menu-item v-if="auth.isSuperadmin" index="/orgs">
           <el-icon><OfficeBuilding /></el-icon>
@@ -103,6 +108,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  ChatLineSquare,
   Iphone,
   Key,
   OfficeBuilding,

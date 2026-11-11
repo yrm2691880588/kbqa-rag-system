@@ -117,7 +117,10 @@
               <el-tooltip content="回答有帮助" placement="top">
                 <el-icon class="fb" :class="{ liked: m.feedback === 1 }" @click="setFeedback(m, 1)"><Top /></el-icon>
               </el-tooltip>
-              <el-tooltip content="回答不准确" placement="top">
+              <el-tooltip
+                :content="m.feedback === -1 && m.feedbackReason ? `已反馈：${reasonLabel(m.feedbackReason)}` : '回答不准确'"
+                placement="top"
+              >
                 <el-icon class="fb" :class="{ disliked: m.feedback === -1 }" @click="setFeedback(m, -1)"><Bottom /></el-icon>
               </el-tooltip>
             </div>
@@ -172,6 +175,14 @@
         <el-button type="danger" @click="doDelete">删除</el-button>
       </template>
     </el-dialog>
+
+    <!-- 点踩时的原因收集弹窗。
+         只在用户表达"不满意"时出现，不打断正常阅读。 -->
+    <FeedbackDialog
+      v-model="feedbackDialog.visible"
+      :submitting="feedbackDialog.submitting"
+      @submit="onFeedbackSubmit"
+    />
   </div>
 </template>
 
@@ -197,8 +208,23 @@ import {
 } from '@/utils/chatMessage'
 import { formatChatTime } from '@/utils/datetime'
 import { renderAnswer } from '@/utils/answerRender'
+import FeedbackDialog from '@/components/chat/FeedbackDialog.vue'
 
 const auth = useAuthStore()
+
+/** 原因 key -> 中文标签（与后端 FEEDBACK_REASONS 一致） */
+const REASON_LABELS: Record<string, string> = {
+  inaccurate: '回答不准确',
+  no_reference: '没有引用到相关资料',
+  irrelevant: '答非所问',
+  incomplete: '回答不完整',
+  wrong_citation: '引用错了文档',
+  outdated: '资料过时',
+  other: '其他',
+}
+function reasonLabel(key?: string | null): string {
+  return key ? (REASON_LABELS[key] ?? key) : ''
+}
 
 // ---------------- 会话状态 ----------------
 const sessions = ref<ChatSession[]>([])
@@ -468,23 +494,81 @@ function toggleThink(key: string) {
   if (m) m.showThink = !m.showThink
 }
 
-/** 用户反馈（赞/踩）：落库保存，供管理员在后台看"哪些回答没答好" */
+/** 反馈弹窗状态。点踩时才打开，问"哪里不准确"。 */
+const feedbackDialog = ref({
+  visible: false,
+  submitting: false,
+  target: null as MsgItem | null,
+})
+
+/**
+ * 用户反馈（赞/踩）。
+ *
+ * 行为差异（这是刻意的）：
+ *   · 点赞  —— 一键完成。满意是简单信号，不需要追问。
+ *   · 点踩  —— 弹出原因选择。不满意必须问清"哪里不对"，
+ *              否则后台只看到"有人不满"却不知道该改什么。
+ *   · 再点同侧 —— 取消评价（不弹窗，直接清空）。
+ */
 async function setFeedback(m: MsgItem, v: number) {
-  // 点同一侧 = 取消（互斥：赞和踩只能留一个）
-  const next = m.feedback === v ? 0 : v
-  const prev = m.feedback          // 记下原值，请求失败时回滚，避免界面和库里对不上
-  m.feedback = next === 0 ? null : next
-  // 刚生成完的回答，编号可能还没送达（后端 saved 事件在路上）；
-  // 这时先不做乐观更新以外的动作，避免把请求发到一个不存在的 id 上
+  // 刚生成完的回答，编号可能还没送达（后端 saved 事件在路上）
   if (!m.msgId || !currentSession.value) {
-    m.feedback = prev
     ElMessage.warning('回答还在保存中，请稍候一秒再点')
     return
   }
+
+  const isCancel = m.feedback === v
+
+  // 点踩且不是取消 -> 先问原因
+  if (v === -1 && !isCancel) {
+    feedbackDialog.value.target = m
+    feedbackDialog.value.visible = true
+    return
+  }
+
+  // 其余情况（点赞 / 取消）直接提交
+  await submitFeedback(m, isCancel ? 0 : v)
+}
+
+/** 真正发请求的地方（赞、踩带原因、取消都走这里）。 */
+async function submitFeedback(
+  m: MsgItem,
+  feedback: number,
+  reason?: string,
+  note?: string,
+) {
+  const prev = m.feedback
+  const prevReason = m.feedbackReason
+  // 乐观更新：先改界面，失败再回滚，避免点击后没反应
+  m.feedback = feedback === 0 ? null : feedback
+  m.feedbackReason = feedback === -1 ? (reason ?? null) : null
+
   try {
-    await setMessageFeedback(currentSession.value.id, m.msgId, next)
+    await setMessageFeedback(
+      currentSession.value!.id,
+      m.msgId!,
+      feedback,
+      note,
+      reason,
+    )
+    if (feedback === -1) ElMessage.success('感谢反馈，我们会据此改进')
+    else if (feedback === 0) ElMessage.info('已取消评价')
   } catch {
-    m.feedback = prev // 回滚：不能让界面显示"已点赞"但库里其实没记上
+    m.feedback = prev
+    m.feedbackReason = prevReason
+  }
+}
+
+/** 弹窗提交：带上用户选的原因与补充说明 */
+async function onFeedbackSubmit(payload: { reason: string; note: string }) {
+  const m = feedbackDialog.value.target
+  if (!m) return
+  feedbackDialog.value.submitting = true
+  try {
+    await submitFeedback(m, -1, payload.reason, payload.note)
+    feedbackDialog.value.visible = false
+  } finally {
+    feedbackDialog.value.submitting = false
   }
 }
 

@@ -51,6 +51,13 @@ const router = createRouter({
           meta: { title: '问答日志', requiresAuth: true, requiresAdmin: true },
         },
         {
+          // 用户反馈：管理员看"哪些回答被踩、为什么"，是改进知识库的直接依据
+          path: 'feedbacks',
+          name: 'feedbacks',
+          component: () => import('@/views/FeedbackView.vue'),
+          meta: { title: '用户反馈', requiresAuth: true, requiresAdmin: true },
+        },
+        {
           // 组织管理：只有平台超管能进（建客户组织、发邀请码）
           path: 'orgs',
           name: 'orgs',

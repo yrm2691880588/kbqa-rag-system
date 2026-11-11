@@ -60,10 +60,12 @@ export function setMessageFeedback(
   messageId: number,
   feedback: number,
   note?: string,
+  reason?: string,
 ) {
   return http.post<ChatMessage>(`/sessions/${sessionId}/messages/${messageId}/feedback`, {
     feedback,
     note: note ?? null,
+    reason: reason ?? null,
   })
 }
 
