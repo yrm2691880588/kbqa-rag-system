@@ -69,7 +69,7 @@
           </template>
         </el-table-column>
         <el-table-column label="创建时间" width="160">
-          <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="360" align="center">
           <template #default="{ row }">
@@ -157,6 +157,7 @@ import OrgQuotaDialog from '@/components/org/OrgQuotaDialog.vue'
 import OrgApiKeyDialog from '@/components/org/OrgApiKeyDialog.vue'
 import OrgMembersDialog from '@/components/org/OrgMembersDialog.vue'
 import OrgInviteCodeDialog from '@/components/org/OrgInviteCodeDialog.vue'
+import { formatDateTime } from '@/utils/datetime'
 
 const orgs = ref<OrgItem[]>([])
 const loading = ref(false)
@@ -296,14 +297,6 @@ function openMembers(row: OrgItem) {
   currentOrgId.value = row.id
   currentOrgName.value = row.name
   memberDialogVisible.value = true
-}
-
-function fmtTime(s?: string | null): string {
-  if (!s) return ''
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 onMounted(loadOrgs)

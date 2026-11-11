@@ -15,7 +15,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import case, func, select
 
-from app.core.deps import AdminUser, DbSession
+from app.core.deps import is_superadmin, AdminUser, DbSession
 from app.models.query_log import QueryLog
 from app.models.user import User
 from app.schemas.query_log import QueryLogOut, QueryLogStats, QueryLogDetailOut
@@ -34,7 +34,7 @@ def _scope_org(current_user: User) -> int | None:
     会看到全平台所有组织的问答日志（含客户真实问过的业务问题）。
     这种情况改用 -1 作为"必然匹配不到任何数据"的哨兵值。
     """
-    if getattr(current_user, "is_superadmin", False):
+    if is_superadmin(current_user):
         return None
     if current_user.org_id is None:
         return -1
@@ -52,7 +52,7 @@ async def list_query_logs(
 ):
     """问答日志列表（按时间倒序）。"""
     org_id = _scope_org(current_user)
-    if org_id is None and not getattr(current_user, "is_superadmin", False):
+    if org_id is None and not is_superadmin(current_user):
         return []
 
     # 顺藤摸瓜：日志 → 用户 → 组织。用 join 而不是先查用户 id 列表，

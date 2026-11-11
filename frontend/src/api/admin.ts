@@ -22,7 +22,15 @@ export interface ResetPasswordResult {
   temp_password: string
 }
 
-export function listMembers(params: MemberQuery = {}) {
+/**
+ * 管理后台的成员列表（查 /users，支持按关键词搜索、按组织筛选）。
+ *
+ * 注意与 api/org.ts 的 listOrganizationMembers 区分：
+ *   这个查的是"用户表"（可跨组织筛选、支持模糊搜），管理员用；
+ *   那个查的是"某组织下的成员"（按组织 id 取），组织管理弹窗用。
+ *   两者原本都叫 listMembers，import 错了会静默调错接口，故改名。
+ */
+export function listUsersForAdmin(params: MemberQuery = {}) {
   return http
     .get<UserInfo[]>('/users', {
       params: {

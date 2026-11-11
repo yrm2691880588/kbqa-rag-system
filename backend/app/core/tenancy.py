@@ -33,8 +33,14 @@ logger = logging.getLogger("kbqa.tenancy")
 
 
 def is_unrestricted(user: User) -> bool:
-    """是否为不受组织限制的账号（平台超管）。"""
-    return bool(getattr(user, "is_superadmin", False))
+    """是否为不受组织限制的账号（平台超管）。
+
+    保留这个"业务语义"的名字，但实现委托给 core.deps.is_superadmin，
+    保证全项目只有一处真正的判定逻辑。
+    """
+    from app.core.deps import is_superadmin
+
+    return is_superadmin(user)
 
 
 async def accessible_kb_ids(db: AsyncSession, user: User) -> list[int]:

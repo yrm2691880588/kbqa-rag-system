@@ -51,7 +51,7 @@
           </template>
         </el-table-column>
         <el-table-column label="最近登录" width="160">
-          <template #default="{ row }">{{ fmtTime(row.last_login_at) || '从未登录' }}</template>
+          <template #default="{ row }">{{ formatDateTime(row.last_login_at) || '从未登录' }}</template>
         </el-table-column>
         <el-table-column label="操作" width="260" align="center">
           <template #default="{ row }">
@@ -100,12 +100,13 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import {
-  listMembers,
+  listUsersForAdmin,
   patchMember,
   resetMemberPassword,
   type MemberPatch,
 } from '@/api/admin'
 import type { UserInfo } from '@/stores/auth'
+import { formatDateTime } from '@/utils/datetime'
 
 const auth = useAuthStore()
 
@@ -125,7 +126,7 @@ function canManage(row: UserInfo): boolean {
 async function load() {
   loading.value = true
   try {
-    members.value = await listMembers({ keyword: keyword.value.trim() })
+    members.value = await listUsersForAdmin({ keyword: keyword.value.trim() })
   } catch {
     /* 错误已由拦截器提示 */
   } finally {
@@ -210,14 +211,6 @@ async function copyTemp() {
   } catch {
     ElMessage.warning('浏览器不允许自动复制，请手动选中上面的密码复制')
   }
-}
-
-function fmtTime(s?: string | null): string {
-  if (!s) return ''
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 onMounted(load)

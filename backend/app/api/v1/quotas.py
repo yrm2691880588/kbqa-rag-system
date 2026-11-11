@@ -14,7 +14,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.core.deps import CurrentUser, DbSession, SuperAdminUser
+from app.core.deps import is_superadmin, CurrentUser, DbSession, SuperAdminUser
 from app.models.organization import Organization
 from app.schemas.quota import QuotaOut, QuotaUpdate, UsageSummaryOut
 from app.services import quota as quota_service
@@ -25,7 +25,8 @@ router = APIRouter(prefix="/quotas", tags=["额度与用量"])
 
 
 def _is_superadmin(user) -> bool:
-    return bool(getattr(user, "is_superadmin", False))
+    """兼容旧名；实现统一走 core.deps.is_superadmin。"""
+    return is_superadmin(user)
 
 
 async def _assert_can_view(user, org_id: int) -> None:

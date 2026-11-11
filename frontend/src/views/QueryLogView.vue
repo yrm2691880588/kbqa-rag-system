@@ -78,7 +78,7 @@
           <template #default="{ row }">{{ row.latency_ms ? (row.latency_ms / 1000).toFixed(1) + 's' : '—' }}</template>
         </el-table-column>
         <el-table-column label="时间" width="160">
-          <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <template #empty>
           <el-empty description="还没有问答记录" :image-size="80" />
@@ -143,6 +143,7 @@ import {
   type QueryLogItem,
   type QueryLogStats,
 } from '@/api/admin'
+import { formatDateTime } from '@/utils/datetime'
 
 const logs = ref<QueryLogItem[]>([])
 const stats = ref<QueryLogStats>({ total: 0, answered: 0, unanswered: 0, avg_latency_ms: 0 })
@@ -197,13 +198,6 @@ async function openDetail(row: QueryLogItem) {
   } catch {
     /* 已提示 */
   }
-}
-
-function fmtTime(s: string): string {
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 onMounted(load)

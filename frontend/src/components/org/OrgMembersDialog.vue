@@ -29,7 +29,7 @@
         </template>
       </el-table-column>
       <el-table-column label="最近登录" width="160">
-        <template #default="{ row }">{{ fmtTime(row.last_login_at) || '从未登录' }}</template>
+        <template #default="{ row }">{{ formatDateTime(row.last_login_at) || '从未登录' }}</template>
       </el-table-column>
       <template #empty>
         <el-empty description="该组织还没有成员" :image-size="70" />
@@ -40,7 +40,8 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { listMembers, type OrgMember } from '@/api/org'
+import { listOrganizationMembers, type OrgMember } from '@/api/org'
+import { formatDateTime } from '@/utils/datetime'
 
 const props = defineProps<{
   modelValue: boolean
@@ -64,19 +65,11 @@ watch(visible, (v) => emit('update:modelValue', v))
 const members = ref<OrgMember[]>([])
 const loading = ref(false)
 
-function fmtTime(s?: string | null): string {
-  if (!s) return ''
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
 async function load() {
   if (!props.orgId) return
   loading.value = true
   try {
-    members.value = await listMembers(props.orgId)
+    members.value = await listOrganizationMembers(props.orgId)
   } catch {
     /* 错误已由拦截器提示 */
   } finally {

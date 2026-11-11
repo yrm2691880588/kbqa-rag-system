@@ -86,6 +86,13 @@ export function rotateInvite(orgId: number) {
 }
 
 /** 查看组织成员：超管可看任意组织，组织管理员只能看自己组织 */
-export function listMembers(orgId: number) {
+/**
+ * 某个组织下的成员（查 /organizations/{orgId}/members）。
+ *
+ * 注意与 api/admin.ts 的 listUsersForAdmin 区分：
+ *   这个只按组织 id 取成员，不带搜索；组织管理弹窗用。
+ *   那个查 /users，支持关键词与跨组织筛选；管理后台成员页用。
+ */
+export function listOrganizationMembers(orgId: number) {
   return http.get<OrgMember[]>(`/organizations/${orgId}/members`).then((r) => r.data)
 }

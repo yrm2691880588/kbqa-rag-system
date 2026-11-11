@@ -16,7 +16,7 @@ import secrets
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
-from app.core.deps import CurrentUser, DbSession, SuperAdminUser
+from app.core.deps import is_superadmin, CurrentUser, DbSession, SuperAdminUser
 from app.models.knowledge_base import KnowledgeBase
 from app.models.organization import Organization
 from app.models.user import User
@@ -119,7 +119,7 @@ async def get_my_invite_code(current_user: CurrentUser, db: DbSession):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "当前账号未归属任何组织，无法查看邀请码"
         )
-    is_super = bool(getattr(current_user, "is_superadmin", False))
+    is_super = is_superadmin(current_user)
     if not (is_super or current_user.role == "admin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "只有组织管理员才能查看邀请码")
 
@@ -214,7 +214,7 @@ async def rotate_invite_code(org_id: int, superadmin: SuperAdminUser, db: DbSess
 @router.get("/{org_id}/members", response_model=list[UserOut])
 async def list_members(org_id: int, current_user: CurrentUser, db: DbSession):
     """查看组织成员：平台超管可看任意组织；组织管理员只能看自己组织。"""
-    is_super = bool(getattr(current_user, "is_superadmin", False))
+    is_super = is_superadmin(current_user)
     is_own_org_admin = current_user.role == "admin" and current_user.org_id == org_id
     if not (is_super or is_own_org_admin):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "只能查看自己所在组织的成员")

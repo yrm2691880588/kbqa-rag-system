@@ -78,6 +78,22 @@ async def require_admin(current_user: Annotated[User, Depends(get_current_user)]
     return current_user
 
 
+def is_superadmin(user: User) -> bool:
+    """是否为平台超管（唯一的权威判定，全项目都用这一个）。
+
+    为什么要单独抽出来：
+        这段判断原本在 11 个地方各写一遍，还有两个模块各有一个
+        叫 _is_superadmin 的函数。将来要调整判定规则
+        （比如"账号被禁用就不算超管"），改 11 处漏一处就是权限漏洞。
+
+    为什么用 getattr 而不是直接 user.is_superadmin：
+        测试里常常用简化的假对象（没有 is_superadmin 字段），
+        直接访问会 AttributeError。这里统一兜底为 False（即"不是超管"），
+        是更安全的方向 —— 找不到信息时按"没有特权"处理。
+    """
+    return bool(getattr(user, "is_superadmin", False))
+
+
 async def require_superadmin(current_user: Annotated[User, Depends(get_current_user)]) -> User:
     """平台超管专用接口的依赖（创建/管理组织）。
 
@@ -86,7 +102,7 @@ async def require_superadmin(current_user: Annotated[User, Depends(get_current_u
         属于平台运营方（你自己）的权限。两者混在一起，任何一个客户的
         管理员都能给自己开一个"新组织"，计费与隔离就都失控了。
     """
-    if not getattr(current_user, "is_superadmin", False):
+    if not is_superadmin(current_user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "需要平台管理员权限")
     return current_user
 

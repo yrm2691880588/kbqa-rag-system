@@ -124,7 +124,7 @@
             </template>
           </el-table-column>
           <el-table-column label="上传时间" width="160">
-            <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+            <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="190" align="center">
             <template #default="{ row }">
@@ -205,6 +205,7 @@ import {
   type EmbeddingHealth,
   type KnowledgeBase,
 } from '@/api/kb'
+import { formatDateTime } from '@/utils/datetime'
 
 // 知识库列表与选中项
 const kbs = ref<KnowledgeBase[]>([])
@@ -412,12 +413,6 @@ function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-function fmtTime(s: string): string {
-  if (!s) return ''
-  const d = new Date(s)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 onMounted(async () => {

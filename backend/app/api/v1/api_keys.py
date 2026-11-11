@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.core.api_key_auth import KEY_PREFIX, hash_key
-from app.core.deps import AdminUser, DbSession
+from app.core.deps import is_superadmin, AdminUser, DbSession
 from app.models.api_key import ApiKey
 from app.models.organization import Organization
 from app.schemas.api_key import ApiKeyCreate, ApiKeyCreatedOut, ApiKeyOut
@@ -35,7 +35,7 @@ def _resolve_org(current_user, requested_org_id: int | None) -> int:
         平台超管 → 必须显式指定 org_id（他自己的账号不属于任何组织）；
         其他管理员 → 只能是自己的组织，请求里填了别的也忽略（不给越权留口子）。
     """
-    if getattr(current_user, "is_superadmin", False):
+    if is_superadmin(current_user):
         if requested_org_id is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "平台超管请指定 org_id（给哪个组织开 Key）")
         return requested_org_id
@@ -94,7 +94,7 @@ async def list_api_keys(
     org_id: int | None = Query(None, description="平台超管可指定；组织管理员忽略"),
 ):
     """列出 API Key（不含明文）。"""
-    scope = _resolve_org(current_user, org_id) if getattr(current_user, "is_superadmin", False) else current_user.org_id
+    scope = _resolve_org(current_user, org_id) if is_superadmin(current_user) else current_user.org_id
     if scope is None:
         return []
     rows = (
@@ -117,7 +117,7 @@ async def revoke_api_key(key_id: int, current_user: AdminUser, db: DbSession):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "API Key 不存在")
 
     # 越权一律 404：不能让别人知道"这个 Key 存在过"
-    if not getattr(current_user, "is_superadmin", False):
+    if not is_superadmin(current_user):
         if current_user.org_id is None or row.org_id != current_user.org_id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "API Key 不存在")
 

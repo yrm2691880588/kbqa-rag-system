@@ -67,7 +67,7 @@
         <template #default="{ row }">{{ row.use_count }}</template>
       </el-table-column>
       <el-table-column label="最后使用" width="150">
-        <template #default="{ row }">{{ fmtTime(row.last_used_at) || '从未使用' }}</template>
+        <template #default="{ row }">{{ formatDateTime(row.last_used_at) || '从未使用' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="80" align="center">
         <template #default="{ row }">
@@ -110,6 +110,7 @@ import {
   type ApiKeyCreated,
   type ApiKeyItem,
 } from '@/api/apiKey'
+import { formatDateTime } from '@/utils/datetime'
 
 const props = defineProps<{
   modelValue: boolean
@@ -140,14 +141,6 @@ const created = ref<ApiKeyCreated | null>(null)
 const apiKeys = ref<ApiKeyItem[]>([])
 const loading = ref(false)
 const creating = ref(false)
-
-function fmtTime(s?: string | null): string {
-  if (!s) return ''
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
 
 /** 判断一把钥匙是否已过期（后端也会拦，这里只是给个直观的红色标记） */
 function isExpired(expiresAt?: string | null): boolean {

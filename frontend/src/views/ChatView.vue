@@ -32,7 +32,7 @@
             <span class="s-name">{{ s.title }}</span>
           </div>
           <div class="s-meta">
-            {{ fmtTime(s.updated_at) }} · {{ s.message_count }} 条消息
+            {{ formatChatTime(s.updated_at) }} · {{ s.message_count }} 条消息
           </div>
           <div class="s-del" @click.stop="confirmDelete(s)">
             <el-icon><Delete /></el-icon>
@@ -95,7 +95,7 @@
                   该回答已被内容安全策略处理
                 </div>
                 <!-- 用 v-html 渲染带 [n] 角标的回答 -->
-                <div class="answer" @click="onAnswerClick" v-html="renderAnswer(m.content, m.noHit)" />
+                <div class="answer" @click="onAnswerClick" v-html="renderAnswer(m.content)" />
                 <!-- 引用条目（回答下方列出来源） -->
                 <div v-if="m.citations && m.citations.length" class="ref-list">
                   <div
@@ -189,6 +189,8 @@ import {
   streamChat, type ChatMessage, type ChatSession, type Citation,
 } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
+import { formatChatTime } from '@/utils/datetime'
+import { renderAnswer } from '@/utils/answerRender'
 
 const auth = useAuthStore()
 
@@ -469,18 +471,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 // ---------------- 渲染与交互 ----------------
-function escHtml(s: string) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-/** 把回答里的 [1][2] 角标渲染成可点击的引用角标 */
-function renderAnswer(content: string, noHit = false) {
-  if (!content) return ''
-  const html = escHtml(content)
-  // 将 [n]（数字，1-9 多位）替换为高亮角标（仅当引用数匹配时由样式区分）
-  const replaced = html.replace(/\[(\d{1,2})\]/g, '<sup class="cite-sup" data-idx="$1">$1</sup>')
-  return noHit ? replaced : replaced
-}
+// 回答渲染（含 XSS 转义）已抽到 @/utils/answerRender，便于单独审查与测试
 
 function onAnswerClick(e: MouseEvent) {
   const target = (e.target as HTMLElement).closest?.('.cite-sup')
@@ -554,17 +545,6 @@ async function scrollBottom(smooth = false) {
   await nextTick()
   const el = bottomAnchor.value
   el?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'end' })
-}
-
-function fmtTime(t?: string) {
-  if (!t) return ''
-  const d = new Date(t)
-  const now = new Date()
-  const sameDay = d.toDateString() === now.toDateString()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  if (sameDay) return hm
-  return `${d.getMonth() + 1}-${d.getDate()} ${hm}`
 }
 </script>
 

@@ -13,7 +13,7 @@ import secrets
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select, update
 
-from app.core.deps import AdminUser, CurrentUser, DbSession
+from app.core.deps import is_superadmin, AdminUser, CurrentUser, DbSession
 from app.core.security import hash_password, validate_password_strength, verify_password
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
@@ -89,7 +89,8 @@ async def bind_phone(payload: BindPhoneRequest, db: DbSession, current_user: Cur
 
 
 def _is_superadmin(user: User) -> bool:
-    return bool(getattr(user, "is_superadmin", False))
+    """兼容旧名；实现统一走 core.deps.is_superadmin。"""
+    return is_superadmin(user)
 
 
 async def _load_member_scoped(db, operator: User, user_id: int) -> User:
