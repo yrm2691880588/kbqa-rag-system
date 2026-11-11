@@ -901,7 +901,13 @@ async function scrollBottom(smooth = false) {
 .msg-list {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 20px 8px;
+  /* 上下留白：内容少时不会紧贴顶栏，内容多时也有呼吸空间 */
+  padding: 32px 32px 16px;
+  /* 消息不满一屏时垂直居中 —— 避免"全堆在顶部、下半屏空荡荡"。
+     flex + margin:auto 的组合在内容超高时会自然失效、改为顶部对齐，
+     正是我们想要的行为。 */
+  display: flex;
+  flex-direction: column;
   /* 主内容区保持白色 —— 这是唯一"亮"的一块，视线自然落在这里。
      左侧两块统一为浅色作背景，形成"背景 / 内容"两层，而不是三层。 */
   background: var(--bg-card);
@@ -909,16 +915,60 @@ async function scrollBottom(smooth = false) {
 
 /* 居中阅读栏：与输入框同宽，保证上下对齐。
    人眼一行读 60~80 字符最舒服，820px 在 14px 字号下大致是这范围。 */
+/* 居中阅读栏（弹性宽度）。
+   ─────────────────────────────────────────────
+   先后试过两个方案，都不合适：
+     固定 820px   -> 宽屏上只占三分之一，左右空一大片
+     固定 1040px  -> 2552px 宽屏上仍然左右各空 500px
+
+   问题在于**固定像素上限**本身：屏幕越宽，空白占比越大。
+
+   现在改成按比例 + 上限组合：
+     width: 78%          跟随容器宽度伸缩
+     max-width: 1200px   再宽也不会变成一行长条
+     min-width 不需要    窄屏时 78% 自然收窄
+
+   为什么还要 1200px 上限：
+     一行中文超过约 60~70 个字，眼睛换行容易串行。
+     1200px 在 15px 字号下大约就是 70 字，是舒适上限。 */
 .msg-inner {
-  max-width: 820px;
-  margin: 0 auto;
-  width: 100%;
+  width: min(78%, 1200px);
+  /* margin auto 在 flex 列容器里会水平+垂直都居中 */
+  margin: auto;
 }
+
+/* 窄屏（笔记本 1366 以下）时 78% 已经够窄，不需要额外处理；
+   超小屏用固定百分比会太挤，回落到更大的相对宽度 */
+@media (max-width: 900px) {
+  .msg-inner {
+    width: 100%;
+  }
+}
+/* 消息行间距 —— 分两级，这是问答界面的关键细节：
+     · 同一轮（用户问 -> AI 答）：12px，紧凑，表示"这是一问一答"
+     · 不同轮之间：           36px，明显拉开，表示"上一轮结束了"
+
+   原来只有单一 18px，导致"同一轮太散、不同轮太挤"，读起来分不清边界。
+   用户反馈"两者之间靠太近/分太开"就是这个原因。 */
 .msg-row {
   display: flex;
-  gap: 10px;
-  margin-bottom: 18px;
+  gap: 12px;
+  margin-bottom: 12px;
   position: relative;
+}
+
+/* 用户提问之后紧跟 AI 回答：保持紧凑 */
+.msg-row.user {
+  margin-bottom: 12px;
+}
+
+/* AI 回答之后是新的一轮提问：拉开距离，形成明显的轮次分隔 */
+.msg-row.assistant {
+  margin-bottom: 12px;
+}
+
+.msg-row.user:not(:first-child) {
+  margin-top: 36px;
 }
 .msg-row.user {
   flex-direction: row-reverse;
@@ -1160,9 +1210,16 @@ async function scrollBottom(smooth = false) {
   padding: 14px 20px 16px;
   background: var(--bg-card);
 }
+/* 与 .msg-inner 严格同宽 —— 上下必须对齐，否则会错开一截 */
 .input-wrap {
-  max-width: 820px;
+  width: min(78%, 1200px);
   margin: 0 auto;
+}
+
+@media (max-width: 900px) {
+  .input-wrap {
+    width: 100%;
+  }
 }
 .input-wrap :deep(.el-textarea__inner) {
   border: 1px solid var(--border-1);
