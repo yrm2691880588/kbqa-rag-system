@@ -31,17 +31,23 @@ echo.
 set "KILLED=0"
 
 REM ---------- 1) 后端 ----------
-echo [1/3] 停止后端（8000）...
+echo [1/4] 停止后端（8000）...
 call :STOP_TARGET "backend" 8000 "后端"
 echo.
 
 REM ---------- 2) 前端 ----------
-echo [2/3] 停止前端（5173）...
+echo [2/4] 停止前端（5173）...
 call :STOP_TARGET "frontend" 5173 "前端"
 echo.
 
+REM ---------- 2.5) 清理 uvicorn reload 产生的孤儿子进程 ----------
+echo [3/4] 清理残留的 uvicorn 子进程...
+powershell -NoProfile -Command ^
+  "$n = 0; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue | ForEach-Object { if ($_.CommandLine -match 'multiprocessing-fork' -and $_.CommandLine -match 'parent_pid') { $parent = $_.ParentProcessId; $alive = Get-Process -Id $parent -ErrorAction SilentlyContinue; if (-not $alive) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ } } }; Write-Output ('  清理孤儿进程: ' + $n + ' 个')"
+if errorlevel 1 echo   [提示] 孤儿进程清理跳过（无 PowerShell 或无残留）。
+
 REM ---------- 3) 数据库容器 ----------
-echo [3/3] 停止数据库容器（PostgreSQL + Qdrant）...
+echo [4/4] 停止数据库容器（PostgreSQL + Qdrant）...
 
 where docker >nul 2>&1
 if errorlevel 1 (

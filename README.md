@@ -195,7 +195,11 @@ npm run dev
 
 浏览器打开 **http://127.0.0.1:5173** 即可使用。
 
-> 💡 也可以直接双击 `scripts\start-all.bat` 一次弹出前后端两个窗口。
+> 💡 分步脚本也可以组合用：`scripts/start-docker.bat` → `scripts/start-backend.bat` → `scripts/start-frontend.bat`。
+> 不过更推荐直接双击根目录的 **[启动.bat](启动.bat)**，它会按正确顺序自动做完这些并等每一步真正就绪。
+>
+> （旧的 `scripts/start-all.bat` 已废弃：它只开前后端窗口、**不启动 Docker**，
+> 会让人误以为全都起来了，实际后端连不上数据库。现在双击它只会提示改用根目录脚本。）
 
 ---
 
