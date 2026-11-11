@@ -696,11 +696,16 @@ async function scrollBottom(smooth = false) {
 }
 
 /* ---- 左栏 ---- */
+/* 会话列表：与左侧导航**同色**，靠一条细边框分隔。
+   ─────────────────────────────────────────────
+   原来这里是 --bg-page（#f6f7f9 浅灰），而导航是 #fbfcfd、主区是纯白，
+   三块三个色阶叠在一起，就是用户说的"割裂"。
+   现在统一成 nav 同色，三块变两块，只剩一条边框作分区。 */
 .side {
   width: 280px;
   min-width: 280px;
-  background: var(--bg-page);
-  border-right: 1px solid var(--border-2);
+  background: var(--aside-bg);
+  border-right: 1px solid var(--aside-border);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -897,6 +902,8 @@ async function scrollBottom(smooth = false) {
   flex: 1;
   overflow-y: auto;
   padding: 24px 20px 8px;
+  /* 主内容区保持白色 —— 这是唯一"亮"的一块，视线自然落在这里。
+     左侧两块统一为浅色作背景，形成"背景 / 内容"两层，而不是三层。 */
   background: var(--bg-card);
 }
 
@@ -938,7 +945,19 @@ async function scrollBottom(smooth = false) {
   background: linear-gradient(135deg, var(--text-3), var(--text-3));
   box-shadow: 0 2px 6px rgba(75, 85, 99, 0.25);
 }
+/* 气泡宽度：AI 与用户分开处理。
+   ─────────────────────────────────────────────
+   AI 回答：铺满阅读栏（长文本需要宽度，否则换行太碎）
+   用户提问：按内容自适应（短问题不该撑成整行长条）
+   这个区分很重要 —— 一刀切用 flex:1 会把"你好"拉成横贯屏幕的蓝条，很怪。 */
 .bubble {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 用户气泡：不拉伸，按内容宽度，最宽 82% */
+.msg-row.user .bubble {
+  flex: 0 1 auto;
   max-width: 82%;
 }
 .user-text {

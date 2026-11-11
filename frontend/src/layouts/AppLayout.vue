@@ -204,17 +204,19 @@ async function copyInvite() {
   height: 100vh;
 }
 
-/* 侧边栏：深色。
-   为什么改成深色：
-     全站原来只有灰白 + 一种蓝，视觉上没有"分区感"。
-     深色侧边栏与浅色内容区形成明确对比，
-     这是当前主流 SaaS 产品（飞书/Notion/Linear）的通用做法。 */
+/* 侧边栏：浅色 + 细边框分区。
+   ─────────────────────────────────────────────
+   这是一次方案修正。第一版用了深色侧边栏，
+   结果「纯黑导航 + 浅灰列表 + 纯白主区」三块硬切，非常割裂；
+   而且这正是十年前后台模板的典型做法，观感老套。
+
+   现在改成：与内容区同为浅色，只用一条极淡边框分区。
+   靠留白和边框建立层次，而不是靠大色块。 */
 .aside {
   display: flex;
   flex-direction: column;
   background: var(--aside-bg);
-  border-right: none;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.06);
+  border-right: 1px solid var(--aside-border);
 }
 
 .brand {
@@ -224,7 +226,7 @@ async function copyInvite() {
   padding: 20px 20px 18px;
   font-size: var(--font-lg);
   font-weight: 600;
-  color: var(--aside-text-active);
+  color: var(--text-1);
   letter-spacing: -0.01em;
 }
 
@@ -250,33 +252,46 @@ async function copyInvite() {
 
 /* ---- 菜单项（深色主题）---- */
 .aside :deep(.el-menu-item) {
-  height: 42px;
-  line-height: 42px;
-  margin-bottom: 2px;
+  height: 40px;
+  line-height: 40px;
+  margin-bottom: 1px;
   border-radius: var(--radius-sm);
   color: var(--aside-text);
   font-size: var(--font-base);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .aside :deep(.el-menu-item:hover) {
   background: var(--aside-bg-hover);
-  color: var(--aside-text-active);
+  color: var(--text-1);
 }
 
-/* 选中态：主色块 + 白字，一眼能看出当前在哪 */
+/* 选中态：主色浅底 + 主色文字。
+   原来用实心主色块（深色背景下才需要那么强的对比），
+   浅色背景下实心块太重，会抢走内容区的注意力。 */
 .aside :deep(.el-menu-item.is-active) {
   background: var(--aside-active-bg);
-  color: var(--aside-text-active);
-  font-weight: 500;
-  box-shadow: 0 2px 8px rgba(61, 87, 219, 0.4);
+  color: var(--aside-active-text);
+  font-weight: 600;
 }
 
-/* ---- 底部用户区（深色底）----
-   原来这块是浅色文字配白底，侧边栏改深色后完全看不清了，必须同步改。 */
+/* 选中项左侧加一条主色指示条，比整块底色更轻、更精致 */
+.aside :deep(.el-menu-item.is-active)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 2px 2px 0;
+  background: var(--brand-500);
+}
+
+/* ---- 底部用户区（浅色底）---- */
 .user-area {
   padding: 12px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--aside-border);
   margin-top: auto;
 }
 
@@ -309,7 +324,7 @@ async function copyInvite() {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-sm);
-  color: var(--aside-text-active);
+  color: var(--text-1);
   font-weight: 500;
 }
 
@@ -321,18 +336,18 @@ async function copyInvite() {
   margin: 0 14px 12px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--aside-text);
+  background: var(--bg-hover);
+  color: var(--text-3);
   font-size: var(--font-xs);
   line-height: 1;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-2);
 }
 
 /* 没有组织归属：换成醒目的警告色（这种账号什么都看不到，必须让人知道） */
 .org-banner.warn {
-  background: rgba(247, 144, 9, 0.14);
+  background: var(--warning-bg);
   border-color: rgba(247, 144, 9, 0.3);
-  color: #f7b955;
+  color: var(--warning);
 }
 
 .org-banner .org-name {
@@ -392,9 +407,20 @@ async function copyInvite() {
   margin-left: 6px;
 }
 
+/* 主内容容器。
+   ─────────────────────────────────────────────
+   原来这里是 --bg-hover（#f2f3f5 灰底），
+   外面套着白色卡片 —— 于是在"导航(极浅) / 列表(极浅) / 容器(灰) / 内容(白)"
+   之间又多了第五种色阶，正是割裂感的来源之一。
+
+   现在改成白色，与内部内容区同色。
+   最终整个界面只有两类底色：
+     · 侧边两块（导航 + 会话列表）：极浅 #fbfcfd，作为"背景层"
+     · 主内容区：纯白，作为"内容层"
+   两层结构，靠一条边框分隔，不再有多层色阶叠加。 */
 .main {
   padding: 0;
-  background: var(--bg-hover);
+  background: var(--bg-card);
   overflow: hidden;
   display: flex;
   flex-direction: column;
