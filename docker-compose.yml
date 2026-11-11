@@ -48,8 +48,17 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      # 同样只绑本机：容器之间通过服务名互访，不需要对外暴露数据库
-      - "127.0.0.1:5432:5432"
+      # 同样只绑本机：容器之间通过服务名互访，不需要对外暴露数据库。
+      #
+      # 为什么端口写成变量（默认 5432）：
+      #   很多机器上 5432 已经被**另一个项目的 PostgreSQL** 占用
+      #   （比如同时跑着别的 Docker 项目、或本机装了原生 PostgreSQL）。
+      #   一旦撞车，容器会报
+      #     "Bind for 0.0.0.0:5432 failed: port is already allocated"
+      #   然后起不来。写成变量后，只要在 .env 里改一行即可：
+      #     POSTGRES_HOST_PORT=5433
+      #   注意：改了这里，backend/.env 的 DATABASE_URL 也要跟着改端口。
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data   # 业务数据持久化
     healthcheck:

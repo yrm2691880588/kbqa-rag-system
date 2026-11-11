@@ -1,5 +1,7 @@
 @echo off
 setlocal EnableDelayedExpansion
+
+)
 title KBQA-RAG 一键停止
 
 REM ============================================================
@@ -22,6 +24,16 @@ set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
 set "PIDDIR=%ROOT%\.run"
 
+REM ---------- 端口配置（与 启动.bat 保持一致，可在 .env 里覆盖）----------
+set "BACKEND_PORT=8000"
+set "FRONTEND_PORT=5173"
+if exist "%ROOT%\.env" (
+    for /f "usebackq tokens=1,2 delims==" %%A in ("%ROOT%\.env") do (
+        if /i "%%A"=="BACKEND_PORT" if not "%%B"=="" set "BACKEND_PORT=%%B"
+        if /i "%%A"=="FRONTEND_PORT" if not "%%B"=="" set "FRONTEND_PORT=%%B"
+    )
+)
+
 echo.
 echo ============================================================
 echo   KBQA-RAG 电商知识库问答系统 - 一键停止
@@ -31,13 +43,13 @@ echo.
 set "KILLED=0"
 
 REM ---------- 1) 后端 ----------
-echo [1/4] 停止后端（8000）...
-call :STOP_TARGET "backend" 8000 "后端"
+echo [1/4] 停止后端（%BACKEND_PORT%）...
+call :STOP_TARGET "backend" %BACKEND_PORT% "后端"
 echo.
 
 REM ---------- 2) 前端 ----------
-echo [2/4] 停止前端（5173）...
-call :STOP_TARGET "frontend" 5173 "前端"
+echo [2/4] 停止前端（%FRONTEND_PORT%）...
+call :STOP_TARGET "frontend" %FRONTEND_PORT% "前端"
 echo.
 
 REM ---------- 2.5) 清理 uvicorn reload 产生的孤儿子进程 ----------
