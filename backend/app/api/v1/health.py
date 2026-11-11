@@ -12,12 +12,13 @@
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.core.deps import AdminUser
+from app.services.rate_limit_base import BaseKeyedLimiter
 from app.services.health_check import run_checks
 
 router = APIRouter(prefix="/health", tags=["健康检查"])
 
 
-class _SlidingWindowLimiter:
+class _SlidingWindowLimiter(BaseKeyedLimiter):
     """按 key 的滑动窗口限流（进程内内存实现）。
 
     为什么用滑动窗口而不是"固定每分钟清零"：
@@ -30,23 +31,24 @@ class _SlidingWindowLimiter:
     """
 
     def __init__(self, max_calls: int, window_seconds: float) -> None:
+        super().__init__()
         self.max_calls = max_calls
         self.window = window_seconds
-        self._hits: dict[str, list[float]] = {}
 
     def hit(self, key: str) -> float:
         """记一次调用。允许则返回 0；超限则返回"还要等几秒"。"""
-        import time
-
-        now = time.monotonic()
-        bucket = self._hits.setdefault(key, [])
+        now = self._now()
+        bucket = list(self._get_state(key) or [])
         # 丢掉窗口外的旧记录
         cutoff = now - self.window
         while bucket and bucket[0] < cutoff:
             bucket.pop(0)
         if len(bucket) >= self.max_calls:
-            return max(0.0, self.window - (now - bucket[0]))
+            left = max(0.0, self.window - (now - bucket[0]))
+            self._set_state(key, bucket, now)
+            return left
         bucket.append(now)
+        self._set_state(key, bucket, now)
         return 0.0
 
 

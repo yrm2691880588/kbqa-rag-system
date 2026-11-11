@@ -462,11 +462,3 @@ class StreamGuard:
         return self._buffer
 
 
-# ============================================================
-# 给"用户提问"用的便捷判断
-# ============================================================
-
-
-def is_blocked_question(question: str) -> FilterResult:
-    """判断用户提问是否应被拦截（只做检测，是否拦截由接口按配置决定）。"""
-    return check(question, mask=False)

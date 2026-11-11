@@ -30,11 +30,9 @@ logger = logging.getLogger("kbqa.api.users")
 
 router = APIRouter(prefix="/users", tags=["用户"])
 
-# 组织内允许的角色。**故意不含 superadmin**：
-# 平台超管是"系统运营方"的身份，属于跨组织的角色。
-# 如果允许通过这个接口授予，任何组织管理员都能把自己变成平台超管，
-# 那道"超管才能建组织"的墙就塌了。
-ORG_ROLES = ("user", "admin")
+# 组织内允许的角色白名单在后面各接口里内联使用（user / admin，不含 superadmin）。
+# 平台超管是"系统运营方"身份、跨组织；若允许通过成员管理接口授予，
+# 任何组织管理员都能把自己变成平台超管，"超管才能建组织"的墙就塌了。
 
 
 @router.get("/me", response_model=UserOut)

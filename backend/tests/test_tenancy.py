@@ -32,6 +32,11 @@ from app.models.organization import Organization
 from app.models.user import User
 
 
+async def _fake_embed(texts):
+    """假的向量化结果：避免测试真的去调百炼接口。"""
+    return [[0.1, 0.2, 0.3]]
+
+
 def _run(coro):
     return asyncio.run(coro)
 
@@ -216,18 +221,44 @@ class TestEmptyScopeIsNotUnfiltered(unittest.TestCase):
         _run(t())
 
     def test_none_means_unrestricted_still_supported(self):
-        """kb_ids=None 仍表示"不限制"（平台级调用需要这个语义），只是会真的去查向量库。
+        """kb_ids=None 仍表示"不限制"（平台级调用需要这个语义），但会真的去查向量库。
 
-        这里只验证语义分支没被误改：None 不会在入口处被短路成空结果。
+        ⚠️ 这个用例以前写得很弱：用 `except Exception: return` 兜底，
+        结果任何异常（包括参数拼错、导入失败）都算通过 ——
+        等于什么都没验证。现在改为**直接观察向量库客户端有没有被调用**：
+        把底层 search 换成探针，看它是否真的被调用、收到的 kb_ids 是什么。
         """
         async def t():
+            from unittest import mock
+
             from app.services import vector_store
-            # 向量库没启动 → 会抛异常。只要不是"提前返回空列表"就说明没走错分支。
-            try:
-                await vector_store.search([0.1, 0.2, 0.3], kb_ids=None)
-            except Exception:
-                return  # 预期：真的去连向量库了
-            self.fail("kb_ids=None 不应被短路为空结果")
+
+            called = {}
+
+            async def fake_search(**kwargs):
+                # 记录调用参数，用于断言"没被提前短路成空列表"
+                called.update(kwargs)
+                return []
+
+            # 探针替换掉真正会连 Qdrant 的那一层
+            with mock.patch.object(vector_store, "search", side_effect=fake_search):
+                # 这里测的是 retrieve 层对 kb_ids=None 的传递语义；
+                # 若 retrieve 内部直接短路，就不会调到 fake_search
+                from app.services import retriever
+
+                with mock.patch.object(retriever, "embed_texts", _fake_embed):
+                    try:
+                        await retriever.retrieve("测试问题", kb_ids=None)
+                    except TypeError:
+                        # retrieve 的签名若变化，这里会明确失败而不是被吞掉
+                        raise
+
+            # 关键断言：确实走到了向量库那一层，且 kb_ids 原样传的是 None
+            self.assertTrue(called, "kb_ids=None 被提前短路了，没有去查向量库")
+            self.assertIsNone(
+                called.get("kb_ids"),
+                f"kb_ids=None 应原样传给向量库（表示不限制），实际收到 {called.get('kb_ids')!r}",
+            )
         _run(t())
 
 

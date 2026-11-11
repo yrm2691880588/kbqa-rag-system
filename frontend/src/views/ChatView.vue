@@ -189,6 +189,12 @@ import {
   streamChat, type ChatMessage, type ChatSession, type Citation,
 } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
+import {
+  createTypingMessage,
+  createUserMessage,
+  toMsgItem,
+  type MsgItem,
+} from '@/utils/chatMessage'
 import { formatChatTime } from '@/utils/datetime'
 import { renderAnswer } from '@/utils/answerRender'
 
@@ -203,27 +209,11 @@ const activeKbs = ref<KnowledgeBase[]>([])
 const scopeKbId = ref(0) // 0=全部库；>0=指定库（仅新会话生效）
 
 // ---------------- 消息展示 ----------------
-interface MsgItem {
-  key: string
-  role: 'user' | 'assistant'
-  content: string
-  thinking: string
-  showThink: boolean
-  citations: Citation[] | null
-  feedback: number | null
-  typing: boolean
-  noHit: boolean
-  noHitText: string
-  thinkingLabel: string
-  blocked: boolean // 内容安全命中：这条回答被系统处理过（界面上给个提示）
-  msgId?: number // 已入库消息的真实 id（历史加载时）
-}
 
 const displayMessages = ref<MsgItem[]>([])
 const inputText = ref('')
 const sending = ref(false)
 let abortCtrl: AbortController | null = null
-let keySeq = 0
 
 const msgListRef = ref<HTMLElement>()
 const bottomAnchor = ref<HTMLElement>()
@@ -293,23 +283,6 @@ async function switchSession(s: ChatSession, force = false) {
   }
 }
 
-function toMsgItem(m: ChatMessage): MsgItem {
-  return {
-    key: `h-${m.id}-${keySeq++}`,
-    role: m.role,
-    content: m.content,
-    thinking: '',
-    showThink: false,
-    citations: m.citations ?? null,
-    feedback: m.feedback,
-    typing: false,
-    noHit: false,
-    noHitText: '',
-    thinkingLabel: '',
-    blocked: false,
-    msgId: m.id,
-  }
-}
 
 function startRename() {
   ElMessageBox.prompt('输入新的会话标题', '重命名会话', {
@@ -351,20 +324,11 @@ async function send() {
   inputText.value = ''
 
   const sid = currentSession.value.id
-  // 本地先展示用户消息与 AI 占位（思考中动画）
-  const uKey = `u-${keySeq++}`
-  const aKey = `a-${keySeq++}`
-  displayMessages.value.push({
-    key: uKey, role: 'user', content: q, thinking: '', showThink: false,
-    citations: null, feedback: null, typing: false, noHit: false, noHitText: '', thinkingLabel: '',
-    blocked: false,
-  })
-  const aiItem: MsgItem = {
-    key: aKey, role: 'assistant', content: '', thinking: '', showThink: false,
-    citations: null, feedback: null, typing: true, noHit: false, noHitText: '',
-    thinkingLabel: '正在思考',
-    blocked: false,
-  }
+  // 本地先展示用户消息与 AI 占位（思考中动画）。
+  // 结构与 key 的生成统一走 @/utils/chatMessage，避免这里漏填字段。
+  displayMessages.value.push(createUserMessage(q))
+  const aiItem = createTypingMessage()
+  aiItem.thinkingLabel = '正在思考'
   displayMessages.value.push(aiItem)
   await scrollBottom(true)
   sending.value = true
@@ -380,7 +344,7 @@ async function send() {
     sid,
     q,
     (ev) => {
-      const item = displayMessages.value.find((m) => m.key === aKey)
+      const item = displayMessages.value.find((m) => m.key === aiItem.key)
       if (!item) return
       switch (ev.type) {
         case 'meta':
@@ -439,7 +403,7 @@ async function send() {
     },
     (msg) => {
       errorMsg = msg
-      const item = displayMessages.value.find((m) => m.key === aKey)
+      const item = displayMessages.value.find((m) => m.key === aiItem.key)
       if (item && !item.content && !item.noHit) {
         item.noHit = true
         item.noHitText = msg
@@ -505,14 +469,11 @@ function toggleThink(key: string) {
 }
 
 /** 用户反馈（赞/踩）：落库保存，供管理员在后台看"哪些回答没答好" */
-const feedbackSupported = true
 async function setFeedback(m: MsgItem, v: number) {
   // 点同一侧 = 取消（互斥：赞和踩只能留一个）
   const next = m.feedback === v ? 0 : v
   const prev = m.feedback          // 记下原值，请求失败时回滚，避免界面和库里对不上
   m.feedback = next === 0 ? null : next
-  if (!feedbackSupported) return
-
   // 刚生成完的回答，编号可能还没送达（后端 saved 事件在路上）；
   // 这时先不做乐观更新以外的动作，避免把请求发到一个不存在的 id 上
   if (!m.msgId || !currentSession.value) {

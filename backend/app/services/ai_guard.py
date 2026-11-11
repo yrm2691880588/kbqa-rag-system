@@ -35,6 +35,7 @@ import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from app.services.rate_limit_base import BaseKeyedLimiter
 
 logger = logging.getLogger("kbqa.ai_guard")
 
@@ -48,7 +49,7 @@ def _now() -> float:
 # ============================================================
 
 
-class RateLimiter:
+class RateLimiter(BaseKeyedLimiter):
     """令牌桶限流器（按"谁"分别计数）。
 
     大白话：给每个客户组织发一个桶，桶里装着"这一分钟能问几次"的令牌。
@@ -64,9 +65,9 @@ class RateLimiter:
     """
 
     def __init__(self, per_minute: int = 0):
+        super().__init__()
         # 0 或负数 = 不限流（默认就是这个状态，不影响现有行为）
         self.per_minute = max(0, int(per_minute or 0))
-        self._buckets: dict[str, tuple[float, float]] = {}   # key -> (令牌数, 上次补充时间)
 
     def configure(self, per_minute: int) -> None:
         self.per_minute = max(0, int(per_minute or 0))
@@ -81,13 +82,14 @@ class RateLimiter:
         # 补充速度：每秒钟补多少令牌（一分钟补满一整桶）
         refill_per_second = capacity / 60.0
 
-        tokens, last = self._buckets.get(key, (capacity, now))
+        state = self._get_state(key) or (capacity, now)
+        tokens, last = state
         tokens = min(capacity, tokens + max(0.0, now - last) * refill_per_second)
 
         if tokens >= cost:
-            self._buckets[key] = (tokens - cost, now)
+            self._set_state(key, (tokens - cost, now), now)
             return True
-        self._buckets[key] = (tokens, now)
+        self._set_state(key, (tokens, now), now)
         return False
 
     def retry_after_seconds(self, key: str, now: float | None = None) -> int:
@@ -95,15 +97,15 @@ class RateLimiter:
         if self.per_minute <= 0:
             return 0
         now = now if now is not None else _now()
-        tokens, last = self._buckets.get(key, (float(self.per_minute), now))
+        state = self._get_state(key) or (float(self.per_minute), now)
+        tokens, last = state
         tokens = min(float(self.per_minute), tokens + max(0.0, now - last) * (self.per_minute / 60.0))
         if tokens >= 1.0:
             return 0
         need = 1.0 - tokens
         return max(1, int(need / (self.per_minute / 60.0)) + 1)
 
-    def reset(self) -> None:
-        self._buckets.clear()
+    # reset() 由 BaseKeyedLimiter 提供
 
 
 rate_limiter = RateLimiter()
