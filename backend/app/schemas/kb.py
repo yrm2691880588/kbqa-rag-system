@@ -65,3 +65,35 @@ class EmbeddingHealth(BaseModel):
 
     ok: bool
     message: str
+
+
+# ============================================================
+# 批量上传的结果结构
+# ============================================================
+
+
+class BatchUploadFailOut(BaseModel):
+    """批量上传时单个文件的失败原因。
+
+    为什么要把失败原因单独列出来而不是拼成一句话：
+        前端需要能逐条显示"哪个文件失败了、为什么"，
+        拼成一句话就没法做结构化展示（也没法让用户点"重试这个"）。
+    """
+
+    filename: str
+    reason: str
+
+
+class BatchUploadResultOut(BaseModel):
+    """批量上传的汇总结果（部分成功语义）。
+
+    为什么 total 要单独给：
+        前端可以据此显示"3 个成功 / 2 个失败（共 5 个）"，
+        不用自己算。
+    """
+
+    total: int
+    succeeded: int
+    failed: int
+    documents: list[DocOut] = []
+    failures: list[BatchUploadFailOut] = []

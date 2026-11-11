@@ -101,6 +101,25 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
         .scalars()
         .all()
     )
+
+    question = payload.question
+    if payload.regenerate:
+        # 重新生成：找回"最后一条用户提问"，并从历史里**剔除**针对它的回答。
+        #
+        # 为什么必须剔除上一轮回答：
+        #   如果把上一条 AI 回答也放进 history，模型倾向于复述它，
+        #   结果只是"换个说法重复一遍"，不是真正的重新生成。
+        last_user_idx = None
+        for i in range(len(hist_rows) - 1, -1, -1):
+            if hist_rows[i].role == "user":
+                last_user_idx = i
+                break
+        if last_user_idx is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "这个会话还没有提问，无法重新生成")
+        question = hist_rows[last_user_idx].content
+        # 历史只到"这条提问之前"，不含它自己和它的回答
+        hist_rows = hist_rows[:last_user_idx]
+
     history = [{"role": m.role, "content": m.content} for m in hist_rows]
 
     # 1.4) 短期限流：每分钟最多问几次。
@@ -121,22 +140,31 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
     #      放在这里（存消息之前）的原因：额度用完就不该在库里留下提问记录，
     #      否则问答历史会出现"有问没有答"的残条。
     #      先扣后用是为了防并发超额，详见 services/quota.py 文件头的说明。
-    decision = await quota.check_and_consume_question(db, current_user.org_id)
-    if not decision.allowed:
-        logger.info("组织 %s 触发额度限制，已拒绝提问：%s", current_user.org_id, decision.reason)
-        raise HTTPException(decision.status_code, decision.reason)
+    #
+    # 重新生成不扣提问次数：它没有产生新的"提问"，只是重新回答同一个问题。
+    # （token 用量仍然会计入 —— 那次模型调用是真的花了钱。）
+    if not payload.regenerate:
+        decision = await quota.check_and_consume_question(db, current_user.org_id)
+        if not decision.allowed:
+            logger.info("组织 %s 触发额度限制，已拒绝提问：%s", current_user.org_id, decision.reason)
+            raise HTTPException(decision.status_code, decision.reason)
 
     # 2) 存用户消息；若首轮且未改名，自动取问题摘要做标题；刷新会话活跃时间
-    db.add(Message(session_id=s.id, role="user", content=payload.question))
-    if s.title == "新对话":
-        s.title = payload.question[:18] + ("…" if len(payload.question) > 18 else "")
+    #
+    # ⚠️ 重新生成时**不能**再存一条用户消息、也不该再扣一次额度：
+    #    用户点"重新生成"是对**同一个问题**再要一次回答，
+    #    如果照常存消息，会话里会出现两条一模一样的提问 ——
+    #    既让用户困惑，也把额度重复扣了一遍。
+    if not payload.regenerate:
+        db.add(Message(session_id=s.id, role="user", content=question))
+        if s.title == "新对话":
+            s.title = question[:18] + ("…" if len(question) > 18 else "")
     s.updated_at = dt.datetime.now(dt.timezone.utc)
     await db.commit()
 
     kb_ids = await resolve_kb_scope(db, current_user, s.kb_scope)
     user_id = current_user.id
     session_id = s.id
-    question = payload.question
     # 组织 id 提前取出来：事件生成器在响应流里执行，那时请求会话可能已关闭，
     # 再去读 ORM 对象的属性会失败，所以这里先落地成普通值
     org_id = current_user.org_id

@@ -63,7 +63,7 @@
               <!-- 拖拽/点击上传，选中即自动上传 -->
               <el-upload
                 :show-file-list="false"
-                :http-request="doUpload"
+                :http-request="doUploadBatch"
                 :disabled="!currentKb || !currentKb.is_active"
                 accept=".docx,.pdf,.xlsx,.txt,.md,.html,.htm"
                 multiple
@@ -200,6 +200,7 @@ import {
   retryDoc,
   updateKB,
   uploadDoc,
+  uploadDocsBatch,
   type ChunkItem,
   type DocItem,
   type EmbeddingHealth,
@@ -352,15 +353,47 @@ async function removeKb(kb: KnowledgeBase) {
 }
 
 // ---- 上传 ----
-async function doUpload(opt: UploadRequestOptions) {
+/**
+ * 批量上传：把用户这次选中的所有文件一次性提交。
+ *
+ * 为什么不用 el-upload 的 http-request（它是逐文件调用的）：
+ *   拖 20 个文件 = 20 次串行请求，慢且中途失败会留下半截状态。
+ *   这里改成先收集、再一次性调批量接口，服务端逐个处理并返回
+ *   "哪几个成功、哪几个失败、为什么失败"。
+ */
+async function doUploadBatch(opt: UploadRequestOptions) {
   if (!currentKb.value) return
+
+  // el-upload 的 http-request 会被每个文件调一次，
+  // 这里把文件先攒起来，等同一批的多个文件都到了再一起发。
+  pendingFiles.push(opt.file)
+  if (uploadTimer) clearTimeout(uploadTimer)
+  uploadTimer = window.setTimeout(() => flushUploads(), 120)
+}
+
+let uploadTimer: number | undefined
+const pendingFiles: File[] = []
+
+async function flushUploads() {
+  if (!currentKb.value || !pendingFiles.length) return
+  const files = pendingFiles.splice(0, pendingFiles.length)
   uploading.value = true
   try {
-    await uploadDoc(currentKb.value.id, opt.file)
-    ElMessage.success(`「${opt.file.name}」已上传，开始入库`)
+    const res = await uploadDocsBatch(currentKb.value.id, files)
+    if (res.failed === 0) {
+      ElMessage.success(`${res.succeeded} 个文档已上传，开始入库`)
+    } else {
+      // 部分成功：把失败原因逐条列出来，用户才知道该改哪个文件
+      const detail = res.failures
+        .slice(0, 3)
+        .map((f) => `${f.filename}：${f.reason}`)
+        .join('；')
+      const more = res.failures.length > 3 ? ` 等 ${res.failures.length} 个` : ''
+      ElMessage.warning(`${res.succeeded} 个成功，${res.failed} 个失败${more}。${detail}`)
+    }
     await loadDocs()
   } catch {
-    /* 409 重复/格式错等已由拦截器提示 */
+    /* 整体失败（如网络/权限）由拦截器提示 */
   } finally {
     uploading.value = false
   }

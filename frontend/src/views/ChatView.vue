@@ -15,9 +15,29 @@
           <el-option v-for="kb in activeKbs" :key="kb.id" :label="kb.name" :value="kb.id" />
         </el-select>
       </div>
+      <!-- 会话搜索：按**消息正文**搜，不只搜标题。
+           会话标题是自动取"问题前 18 字"，时间一长根本认不出来；
+           真正好用的是"我记得问过某个词"。 -->
+      <div class="search-bar">
+        <el-input
+          v-model="sessionKeyword"
+          size="small"
+          placeholder="搜索历史对话内容"
+          clearable
+          @keyup.enter="loadSessions()"
+          @clear="loadSessions()"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+      </div>
       <div v-if="loadingSessions" v-loading="true" class="side-loading" />
       <div v-else-if="!sessions.length" class="side-empty">
-        <el-empty description="还没有会话" :image-size="60" />
+        <el-empty
+          :description="sessionKeyword ? '没有匹配的对话' : '还没有会话'"
+          :image-size="60"
+        />
       </div>
       <div v-else class="session-list">
         <div
@@ -122,6 +142,16 @@
                 placement="top"
               >
                 <el-icon class="fb" :class="{ disliked: m.feedback === -1 }" @click="setFeedback(m, -1)"><Bottom /></el-icon>
+              </el-tooltip>
+              <!-- 重新生成：对同一问题再答一次。
+                   只在最后一条回答上显示 —— 用户通常是想"这条不满意，换个答案"，
+                   给所有历史回答都挂按钮反而干扰阅读。 -->
+              <el-tooltip
+                v-if="m === lastAssistantMessage && !sending"
+                content="换个答案重新生成"
+                placement="top"
+              >
+                <el-icon class="fb" @click="regenerate"><RefreshRight /></el-icon>
               </el-tooltip>
             </div>
           </div>
@@ -230,6 +260,8 @@ function reasonLabel(key?: string | null): string {
 const sessions = ref<ChatSession[]>([])
 const currentSession = ref<ChatSession | null>(null)
 const loadingSessions = ref(true)
+/** 会话搜索关键词（按消息正文搜） */
+const sessionKeyword = ref('')
 const loadingHistory = ref(false)
 const activeKbs = ref<KnowledgeBase[]>([])
 const scopeKbId = ref(0) // 0=全部库；>0=指定库（仅新会话生效）
@@ -278,7 +310,7 @@ onBeforeUnmount(() => {
 async function loadSessions() {
   loadingSessions.value = true
   try {
-    sessions.value = (await listSessions()).data
+    sessions.value = await listSessions(sessionKeyword.value.trim() || undefined)
   } catch { /* 拦截器已提示 */ } finally {
     loadingSessions.value = false
   }
@@ -344,15 +376,25 @@ async function doDelete() {
 }
 
 // ---------------- 发送 / 流式 ----------------
-async function send() {
-  const q = inputText.value.trim()
+/**
+ * 发送一轮提问。
+ *
+ * @param opts.question   指定问题（重新生成时传原问题）。不传则取输入框内容。
+ * @param opts.regenerate 是否为"重新生成"：后端据此不重复存消息、不重复扣额度。
+ */
+async function send(opts: { question?: string; regenerate?: boolean } = {}) {
+  const isRegen = !!opts.regenerate
+  const q = isRegen ? (opts.question ?? '') : inputText.value.trim()
   if (!q || sending.value || !currentSession.value) return
-  inputText.value = ''
+  if (!isRegen) inputText.value = ''
 
   const sid = currentSession.value.id
-  // 本地先展示用户消息与 AI 占位（思考中动画）。
-  // 结构与 key 的生成统一走 @/utils/chatMessage，避免这里漏填字段。
-  displayMessages.value.push(createUserMessage(q))
+  // 本地先展示 AI 占位（思考中动画）。
+  // 重新生成时**不再插一条用户消息** —— 那个问题已经在界面上，
+  // 再插一条会出现两条一模一样的问题。
+  if (!isRegen) {
+    displayMessages.value.push(createUserMessage(q))
+  }
   const aiItem = createTypingMessage()
   aiItem.thinkingLabel = '正在思考'
   displayMessages.value.push(aiItem)
@@ -437,6 +479,8 @@ async function send() {
       if (item) item.typing = false
       finishSending()
     },
+    () => {},          // onComplete：本轮不需要额外收尾，留空
+    { regenerate: isRegen },
   )
 }
 
@@ -492,6 +536,40 @@ function openCitation(c: Citation, m: MsgItem) {
 function toggleThink(key: string) {
   const m = displayMessages.value.find((x) => x.key === key)
   if (m) m.showThink = !m.showThink
+}
+
+/** 最后一条 AI 回答（"重新生成"按钮只在它下面显示） */
+const lastAssistantMessage = computed(() => {
+  const list = displayMessages.value
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].role === 'assistant' && !list[i].typing) return list[i]
+  }
+  return null
+})
+
+/**
+ * 重新生成当前问题。
+ *
+ * 先把这条提问之后的 AI 回答从界面移除（它们马上会被新答案取代，
+ * 留着会短暂出现"两条回答"的错觉），再带 regenerate 标记重发。
+ */
+async function regenerate() {
+  if (sending.value || !currentSession.value) return
+  const list = displayMessages.value
+  let lastUserIdx = -1
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].role === 'user') {
+      lastUserIdx = i
+      break
+    }
+  }
+  if (lastUserIdx < 0) {
+    ElMessage.warning('还没有提问，无法重新生成')
+    return
+  }
+  const question = list[lastUserIdx].content
+  list.splice(lastUserIdx + 1, list.length - lastUserIdx - 1)
+  await send({ question, regenerate: true })
 }
 
 /** 反馈弹窗状态。点踩时才打开，问"哪里不准确"。 */
@@ -616,6 +694,10 @@ async function scrollBottom(smooth = false) {
 .new-btn {
   width: 100%;
 }
+.search-bar {
+  padding: 0 12px 8px;
+}
+
 .scope-bar {
   display: flex;
   align-items: center;

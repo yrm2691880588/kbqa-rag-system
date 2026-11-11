@@ -9,7 +9,7 @@ import datetime as dt
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 
 from app.core.deps import CurrentUser, DbSession
 from app.core.tenancy import resolve_kb_scope
@@ -31,8 +31,22 @@ async def _own_session(db: DbSession, session_id: int, user_id: int) -> ChatSess
 
 
 @router.get("", response_model=list[SessionOut])
-async def list_sessions(current_user: CurrentUser, db: DbSession):
-    """当前用户的会话列表（按最近活跃排序）。"""
+async def list_sessions(
+    current_user: CurrentUser,
+    db: DbSession,
+    keyword: str | None = Query(
+        None, max_length=100, description="按消息内容搜索（同时匹配会话标题）"
+    ),
+):
+    """当前用户的会话列表（按最近活跃排序）。
+
+    带 keyword 时按**消息正文**搜索，而不只是标题。
+    为什么：会话标题是自动取"问题前 18 字"，时间一长根本认不出来；
+    真正好用的是"我记得问过某个词" —— 所以搜正文才有价值。
+    命中后返回的是会话（不是消息），前端点进去就能看到完整上下文。
+    """
+    kw = (keyword or "").strip()
+
     # 会话 + 各自的消息数（LEFT JOIN 聚合）
     stmt = (
         select(ChatSession, func.count(Message.id).label("msg_count"))
@@ -41,6 +55,22 @@ async def list_sessions(current_user: CurrentUser, db: DbSession):
         .group_by(ChatSession.id)
         .order_by(ChatSession.updated_at.desc())
     )
+
+    # 关键词筛选：标题命中 或 正文命中，都算匹配。
+    #
+    # 为什么用"子查询找 session_id"而不是给 join 加条件：
+    #   给 join 加条件会让 msg_count 变成"命中条数"而不是"会话总消息数"。
+    #   用户看到"3 条消息"但这个会话其实有 20 条，只会困惑。
+    #   子查询保持计数语义不变，只负责筛选显示哪些会话。
+    if kw:
+        like = f"%{kw}%"
+        matched = select(Message.session_id).where(Message.content.ilike(like))
+        stmt = stmt.where(
+            or_(
+                ChatSession.title.ilike(like),
+                ChatSession.id.in_(matched),
+            )
+        )
     rows = (await db.execute(stmt)).all()
     items: list[dict] = []
     for s, msg_count in rows:

@@ -24,6 +24,13 @@ const router = createRouter({
       redirect: '/chat',
       children: [
         {
+          // 仪表盘：管理员登录后第一眼看到"系统整体怎么样"
+          path: 'dashboard',
+          name: 'dashboard',
+          component: () => import('@/views/DashboardView.vue'),
+          meta: { title: '概览', requiresAuth: true, requiresAdmin: true },
+        },
+        {
           path: 'chat',
           name: 'chat',
           component: () => import('@/views/ChatView.vue'),

@@ -18,6 +18,11 @@
       </div>
 
       <el-menu :default-active="$route.path" router class="menu">
+        <!-- 概览：管理员一进来先看整体状况，而不是直接进聊天 -->
+        <el-menu-item v-if="auth.isAdmin && auth.user?.org_id" index="/dashboard">
+          <el-icon><DataBoard /></el-icon>
+          <span>概览</span>
+        </el-menu-item>
         <el-menu-item index="/chat">
           <el-icon><ChatLineRound /></el-icon>
           <span>知识库问答</span>

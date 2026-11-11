@@ -26,7 +26,14 @@ from app.core.deps import AdminUser, CurrentUser, DbSession
 from app.core.tenancy import get_scoped_kb
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
-from app.schemas.kb import DocOut, KBCreate, KBOut, KBUpdate
+from app.schemas.kb import (
+    BatchUploadFailOut,
+    BatchUploadResultOut,
+    DocOut,
+    KBCreate,
+    KBOut,
+    KBUpdate,
+)
 from app.services import job_queue, vector_store
 from app.services.file_parser import normalize_ext
 from app.services.ingestion import doc_file_path, upload_dir_for
@@ -34,6 +41,12 @@ from app.services.ingestion import doc_file_path, upload_dir_for
 logger = logging.getLogger("kbqa.api.kb")
 
 router = APIRouter(prefix="/knowledge-bases", tags=["知识库"])
+
+
+# 批量上传一次最多几个文件。
+# 定这个上限的原因：防止有人写脚本一次塞几千个文件，
+# 把内存和解析队列同时打满（每个文件都要读进内存、都要排一条任务）。
+MAX_BATCH_FILES = 50
 
 
 def _max_upload_mb() -> int:
@@ -147,18 +160,24 @@ async def list_documents(kb_id: int, db: DbSession, admin: AdminUser):
     return rows
 
 
-@router.post("/{kb_id}/documents", response_model=DocOut, status_code=status.HTTP_201_CREATED)
-async def upload_document(
+async def _save_one_document(
     kb_id: int,
-    db: DbSession,
-    admin: AdminUser,
-    file: UploadFile = File(...),
-):
-    """上传文档并自动触发解析入库（本组织管理员）。支持 docx/pdf/xlsx/txt/md/html。"""
-    kb = await get_scoped_kb(db, admin, kb_id)
-    if not kb.is_active:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "知识库不存在或已停用")
+    kb,
+    db,
+    file: UploadFile,
+) -> Document:
+    """保存**单个**上传文件：校验 → 查重 → 落盘 → 入队。
 
+    抽成独立函数的原因：
+        单文件接口和批量接口必须走**完全相同**的校验与查重逻辑。
+        如果各写一份，迟早出现"批量能传、单个不能传"这种诡异差异。
+        这里把流程集中一处，两个接口都调它。
+
+    异常约定：
+        校验失败直接抛 HTTPException（4xx），由调用方决定怎么呈现。
+        批量接口会捕获它，把单个文件的失败收集成"部分成功"结果，
+        而不是让整个批次失败。
+    """
     raw_name = (file.filename or "").strip() or "未命名文件"
     # 清洗文件名：去掉路径成分（仅作展示；磁盘文件用 id 命名避开中文/特殊字符）
     safe_name = os.path.basename(raw_name.replace("\\", "/")).strip()[:255] or "未命名文件"
@@ -251,6 +270,103 @@ async def upload_document(
     await job_queue.enqueue(db, doc.id, kb.id)
     logger.info("文档 %s 已上传并排入解析队列（doc_id=%d）", safe_name, doc.id)
     return doc
+
+
+@router.post("/{kb_id}/documents", response_model=DocOut, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    kb_id: int,
+    db: DbSession,
+    admin: AdminUser,
+    file: UploadFile = File(...),
+):
+    """上传单个文档并自动触发解析入库（本组织管理员）。
+
+    支持 docx / pdf / xlsx / txt / md / html。
+    需要一次传多个文件时用 /documents/batch。
+    """
+    kb = await get_scoped_kb(db, admin, kb_id)
+    if not kb.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "知识库不存在或已停用")
+    return await _save_one_document(kb_id, kb, db, file)
+
+
+@router.post("/{kb_id}/documents/batch", response_model=BatchUploadResultOut)
+async def upload_documents_batch(
+    kb_id: int,
+    db: DbSession,
+    admin: AdminUser,
+    files: list[UploadFile] = File(..., description="要上传的多个文件"),
+):
+    """批量上传文档（本组织管理员）。
+
+    为什么单独做一个批量接口，而不是让前端循环调单文件接口：
+      ① 用户一次拖 50 个文件时，50 次串行请求的总耗时更长，
+         而且中途断网会留下"传了一半"的状态；
+      ② 服务端一次处理能控制并发与内存（逐个处理，不并发读所有文件）；
+      ③ 返回结构能统一给出"哪几个成功、哪几个失败、为什么失败"。
+
+    为什么是"部分成功"语义而不是"全有或全无"：
+      用户拖进来的文件里可能夹着一个不支持的格式。
+      如果整批回滚，用户得自己找是哪个文件的问题，体验很差。
+      所以这里逐个处理，成功的照常入库，失败的收集原因返回。
+    """
+    kb = await get_scoped_kb(db, admin, kb_id)
+    if not kb.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "知识库不存在或已停用")
+
+    if not files:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "没有收到文件")
+
+    # 一次最多传多少个：防止有人用脚本塞几千个文件把服务拖垮
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"一次最多上传 {MAX_BATCH_FILES} 个文件（当前 {len(files)} 个），请分批上传",
+        )
+
+    succeeded: list[DocOut] = []
+    failed: list[BatchUploadFailOut] = []
+
+    # ⚠️ 每个文件用**独立的会话**处理，而不是共用请求的 db。
+    #
+    # 为什么必须这样（实测踩过的坑）：
+    #   最初实现在失败时调 db.rollback() 想让"这一个文件"回滚，
+    #   但 rollback 是**整个会话级**的 —— 它把同一会话里前面已经成功的文件
+    #   也一起回滚了，后续文件还会因为会话状态错乱被误报成"服务内部错误"。
+    #   实测结果：3 个文件（2 个正常 + 1 个坏格式）只有 1 个成功。
+    #
+    #   改成每个文件独立会话后，失败只回滚自己，互不影响，
+    #   "部分成功"语义才真正成立。
+    from app.db.session import AsyncSessionLocal
+
+    for f in files:
+        name = (f.filename or "未命名文件").strip()
+        try:
+            async with AsyncSessionLocal() as per_file_db:
+                doc = await _save_one_document(kb_id, kb, per_file_db, f)
+                # 会话关闭前把需要的字段读出来，避免 detached 后再访问触发懒加载
+                doc_out = DocOut.model_validate(doc)
+            succeeded.append(doc_out)
+        except HTTPException as exc:
+            # 单个文件失败不影响其他文件（见 docstring 的"部分成功"说明）
+            failed.append(
+                BatchUploadFailOut(filename=name, reason=str(exc.detail))
+            )
+        except Exception:
+            logger.exception("批量上传时文件 %s 处理异常", name)
+            failed.append(BatchUploadFailOut(filename=name, reason="服务内部错误"))
+
+    logger.info(
+        "批量上传完成：成功 %d 个，失败 %d 个（kb_id=%d）",
+        len(succeeded), len(failed), kb_id,
+    )
+    return BatchUploadResultOut(
+        total=len(files),
+        succeeded=len(succeeded),
+        failed=len(failed),
+        documents=succeeded,
+        failures=failed,
+    )
 
 
 def _remove_doc_file(doc: Document) -> None:

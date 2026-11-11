@@ -31,8 +31,16 @@ export interface ChatMessage {
 }
 
 // ---- 会话管理 ----
-export function listSessions() {
-  return http.get<ChatSession[]>('/sessions')
+/**
+ * 会话列表。
+ * 带 keyword 时按**消息正文**搜索（后端同时匹配标题）。
+ */
+export function listSessions(keyword?: string) {
+  return http
+    .get<ChatSession[]>('/sessions', {
+      params: keyword ? { keyword } : undefined,
+    })
+    .then((r) => r.data)
 }
 
 export function createSession(kbIds?: number[] | null) {
@@ -96,6 +104,7 @@ export function streamChat(
   onEvent: (ev: StreamEvent) => void,
   onError: (msg: string) => void,
   onComplete: () => void = () => {},
+  options: { regenerate?: boolean } = {},
 ): AbortController {
   const controller = new AbortController()
 
@@ -109,7 +118,11 @@ export function streamChat(
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ session_id: sessionId, question }),
+    body: JSON.stringify({
+      session_id: sessionId,
+      question,
+      ...(options.regenerate ? { regenerate: true } : {}),
+    }),
     signal: controller.signal,
   })
     .then(async (resp) => {

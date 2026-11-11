@@ -52,6 +52,14 @@ class ChatRequest(BaseModel):
 
     session_id: int = Field(description="会话 id（必须属于当前用户）")
     question: str = Field(min_length=1, max_length=2000, description="用户问题")
+    regenerate: bool = Field(
+        default=False,
+        description=(
+            "true = 对同一问题重新生成回答。"
+            "服务端会忽略 question 字段，取会话里最后一条用户提问重跑，"
+            "且**不把上一轮回答放进历史**（否则模型只是复述旧答案）。"
+        ),
+    )
 
 
 # ============================================================
