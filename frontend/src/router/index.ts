@@ -37,14 +37,14 @@ const router = createRouter({
           meta: { title: '知识库管理', requiresAuth: true, requiresAdmin: true },
         },
         {
-          // 成员管理（P1-C）：组织管理员管本组织的人
+          // 成员管理：组织管理员管本组织的人
           path: 'members',
           name: 'members',
           component: () => import('@/views/MembersView.vue'),
           meta: { title: '成员管理', requiresAuth: true, requiresAdmin: true },
         },
         {
-          // 问答日志（P1-C）：看哪些问题没答上，是补资料的依据
+          // 问答日志：看哪些问题没答上，是补资料的依据
           path: 'query-logs',
           name: 'query-logs',
           component: () => import('@/views/QueryLogView.vue'),

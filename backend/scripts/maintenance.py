@@ -1,4 +1,4 @@
-"""数据清理与归档（P2-22）。
+"""数据清理与归档。
 
 怎么用（backend 目录下）：
 
@@ -44,7 +44,7 @@ from app.services import maintenance  # noqa: E402
 
 
 async def main() -> int:
-    parser = argparse.ArgumentParser(description="数据清理与归档（P2-22）")
+    parser = argparse.ArgumentParser(description="数据清理与归档")
     parser.add_argument("--apply", action="store_true",
                         help="真的执行删除。不加这个参数时只预览，一条都不会删")
     parser.add_argument("--no-archive", action="store_true",

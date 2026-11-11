@@ -62,7 +62,7 @@ def _as_utc(value: dt.datetime) -> dt.datetime:
 
 
 # 说明：这里曾经有个 _recent_codes() 辅助函数，用来把验证码行转成 (时间, 行) 列表。
-# 后来各处改成直接遍历并调 _as_utc() 比较，它就没人用了 —— P2-23 收口时删除。
+# 后来各处改成直接遍历并调 _as_utc() 比较，它就没人用了，已在代码收口时删除。
 # 顺手记一条纪律：**没人调用的函数要删掉，不能"留着以后可能用"**。
 # 因为读代码的人会花时间去理解它、甚至以为它还在被使用，
 # 结果排查问题时被一个"其实没跑"的函数带偏。
@@ -240,7 +240,7 @@ async def issue_sms_code(db: AsyncSession, phone: str, ip: str) -> tuple[bool, s
     await db.commit()
     await db.refresh(row)
 
-    # 交给配置选定的那条短信通道真去发（P1-H）
+    # 交给配置选定的那条短信通道真去发
     text = build_code_text(code, settings.sms_code_ttl_minutes)
     sender = None
     try:

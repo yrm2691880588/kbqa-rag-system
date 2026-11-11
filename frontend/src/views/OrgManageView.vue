@@ -142,7 +142,7 @@
 </template>
 
 <script setup lang="ts">
-// 组织管理页（P1-A）：只有平台超管能进（路由守卫 + 后端接口双重校验）
+// 组织管理页：只有平台超管能进（路由守卫 + 后端接口双重校验）
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'

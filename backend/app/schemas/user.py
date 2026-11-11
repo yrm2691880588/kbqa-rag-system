@@ -145,7 +145,7 @@ class SimpleMessageOut(BaseModel):
     message: str
 
 
-# ============ 管理员管理成员（P1-C）============
+# ============ 管理员管理成员============
 
 class AdminUserUpdate(BaseModel):
     """管理员修改成员：改角色 / 启停。

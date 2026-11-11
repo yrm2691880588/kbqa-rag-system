@@ -38,7 +38,7 @@ class OrgOut(BaseModel):
     member_count: int = 0
     kb_count: int = 0
 
-    # ---- 用量与额度（P1-B）：列表页一眼看出"哪家快用完了" ----
+    # ---- 用量与额度：列表页一眼看出"哪家快用完了" ----
     # 这些字段由接口显式计算后填入；默认值保证老调用方不受影响。
     monthly_questions: int = 0                       # 本月已用提问次数
     monthly_question_limit: int | None = None        # 本月上限（None=不限）

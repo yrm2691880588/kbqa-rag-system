@@ -66,7 +66,7 @@ for mod in ["app.services.ai_guard", "app.services.job_queue", "app.services.wor
     except Exception as e:
         bad.append(f"import {mod} 失败: {type(e).__name__}: {str(e)[:120]}")
 
-# 2) 新增的数据表是否已注册（P2-15 解析任务表）
+# 2) 新增的数据表是否已注册（解析任务表）
 try:
     import app.models
     from app.db.base import Base
@@ -78,7 +78,7 @@ try:
 except Exception as e:
     bad.append(f"检查数据表失败: {type(e).__name__}")
 
-# 3) 新增的配置项是否存在（P2-15/16/17/19）
+# 3) 新增的配置项是否存在
 try:
     from app.core.config import Settings
     fields = set(Settings.model_fields)
@@ -94,7 +94,7 @@ try:
 except Exception as e:
     bad.append(f"检查配置项失败: {type(e).__name__}")
 
-# 4) 迁移工具是否装进去了（P2-18）
+# 4) 迁移工具是否装进去了
 try:
     import alembic
     ok.append(f"alembic 已安装（{alembic.__version__}）")
@@ -106,7 +106,7 @@ import os
 if os.path.isdir("/app/migrations") or os.path.isdir("/migrations"):
     ok.append("迁移脚本目录已打进镜像")
 else:
-    bad.append("镜像里没有 migrations 目录（P2-18 的迁移脚本没被打包）")
+    bad.append("镜像里没有 migrations 目录（的迁移脚本没被打包）")
 if os.path.isfile("/app/alembic.ini"):
     ok.append("alembic.ini 已打进镜像")
 else:

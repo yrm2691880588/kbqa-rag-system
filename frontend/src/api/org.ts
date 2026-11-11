@@ -14,7 +14,7 @@ export interface OrgItem {
   created_at: string
   member_count: number
   kb_count: number
-  // ---- 用量与额度（P1-B）----
+  // ---- 用量与额度----
   monthly_questions: number                          // 本月已问多少次
   monthly_question_limit: number | null              // 本月上限（null=不限）
   question_limit_per_day: number | null              // 每日上限（null=不限）

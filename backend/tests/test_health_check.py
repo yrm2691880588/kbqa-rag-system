@@ -31,7 +31,7 @@ class TestRunWrapper(unittest.TestCase):
             return True, "不该走到这里"
 
         # 把超时阈值改小，避免测试等待。
-        # 注意这里改的是**配置项**而不是模块常量：P2-20 之后超时从配置读，
+        # 注意这里改的是**配置项**而不是模块常量：超时现在从配置读，
         # 测试若还去 patch 那个已不存在的常量，patch 会"成功"但不影响任何行为，
         # 于是这条测试就变成了假绿（真超时没被触发，却因为 detail 里恰好有"超时"而通过）。
         old = settings.health_check_timeout

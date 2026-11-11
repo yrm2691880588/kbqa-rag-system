@@ -9,7 +9,7 @@
     ⚠️ 它有一个很容易被忽略的坑：**电话线数量是有限的**（数据库那边也有上限）。
     如果应用开的线数 × 进程数 超过了数据库允许的总数，
     高峰时就会"拨不出去"—— 表现是接口大面积报错，但平时完全看不出来。
-    所以本文件把池大小做成可配置（P2-17），并在启动自检里**把这道算术题算给运维看**。
+    所以本文件把池大小做成可配置，并在启动自检里**把这道算术题算给运维看**。
 
 另外一件更要命的事：**借了必须还**。
     某个接口如果借了连接忘了还（异常路径最容易漏），池子会一条条被耗干，
@@ -44,7 +44,7 @@ def _build_engine():
         # SQLite 是单文件数据库，没有"连接池"这回事，只要关掉线程限制即可
         kwargs["connect_args"] = {"check_same_thread": False}
     else:
-        # 池子大小（P2-17：从配置读，不再用 SQLAlchemy 的默认值）
+        # 池子大小：从配置读，不再用 SQLAlchemy 的默认值
         kwargs.update(
             pool_size=int(settings.db_pool_size or 5),
             max_overflow=int(settings.db_max_overflow or 0),

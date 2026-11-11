@@ -1,5 +1,5 @@
 <template>
-  <!-- 问答日志（P1-C）：把一直"只写不读"的记录变成优化知识库的依据 -->
+  <!-- 问答日志：把一直"只写不读"的记录变成优化知识库的依据 -->
   <div class="page">
     <div class="page-head">
       <div class="head-left">
@@ -133,7 +133,7 @@
 </template>
 
 <script setup lang="ts">
-// 问答日志页（P1-C）：管理员专用。日志按组织隔离，看不到别家公司的提问。
+// 问答日志页：管理员专用。日志按组织隔离，看不到别家公司的提问。
 import { onMounted, ref } from 'vue'
 import {
   getQueryLogDetail,

@@ -111,7 +111,7 @@ async def retrieve(question: str, kb_ids: list[int] | None = None, top_k: int | 
     """检索与问题最相关的资料片段（已做文档级去噪，可直接当引用用）。
 
     Args:
-        question: 用户问题原文（直接向量化，暂不做追问改写，M4 再优化）。
+        question: 用户问题原文（直接向量化，暂不做追问改写）。
         kb_ids: 限定检索的知识库 id 列表；None=检索全部已启用库。
         top_k: 最终返回的片段上限，默认用配置。
 
@@ -130,7 +130,7 @@ async def retrieve(question: str, kb_ids: list[int] | None = None, top_k: int | 
         kb_ids=kb_ids,
         top_k=candidate_k,
     )
-    # 2.5) 重排（P2-21）：把粗筛出来的候选交给重排模型精挑一遍。
+    # 2.5) 重排：把粗筛出来的候选交给重排模型精挑一遍。
     #      注意顺序 —— 重排要放在"文档级去噪"**之前**：
     #      去噪是靠"分数之间的相对比例"来判断哪篇文档不相关的，
     #      而重排恰好把"只是词面像、其实答不了问题"的片段分数压下去，

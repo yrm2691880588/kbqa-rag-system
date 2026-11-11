@@ -27,12 +27,12 @@
           <el-icon><FolderOpened /></el-icon>
           <span>知识库管理</span>
         </el-menu-item>
-        <!-- 成员管理（P1-C）：组织管理员管本组织的人 -->
+        <!-- 成员管理：组织管理员管本组织的人 -->
         <el-menu-item v-if="auth.isAdmin && auth.user?.org_id" index="/members">
           <el-icon><UserFilled /></el-icon>
           <span>成员管理</span>
         </el-menu-item>
-        <!-- 问答日志（P1-C）：看"哪些问题没答上"，是优化知识库的依据 -->
+        <!-- 问答日志：看"哪些问题没答上"，是优化知识库的依据 -->
         <el-menu-item v-if="auth.isAdmin && auth.user?.org_id" index="/query-logs">
           <el-icon><DataLine /></el-icon>
           <span>问答日志</span>

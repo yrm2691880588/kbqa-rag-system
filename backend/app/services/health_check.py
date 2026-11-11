@@ -24,7 +24,7 @@ from app.core.config import settings
 logger = logging.getLogger("kbqa.health")
 
 # 单项探活超时（秒）：超过即判为异常，避免探活自身被慢依赖拖死。
-# 从配置读（P2-20）：设太小会在数据库偶尔卡顿时误报"不健康"，
+# 从配置读：设太小会在数据库偶尔卡顿时误报"不健康"，
 # 设太大会让监控系统的探活请求自己超时（监控一般给 10 秒）。
 def _check_timeout() -> float:
     return float(getattr(settings, "health_check_timeout", 5.0) or 5.0)
@@ -54,7 +54,7 @@ async def _run(name: str, checker) -> dict:
 async def _check_database() -> tuple[bool, str]:
     """数据库：独立开会话探活，确保即使连不上也能给出结论而不是 500。
 
-    返回的信息里带上**连接池实时状态**（P2-17）。为什么这个数很重要：
+    返回的信息里带上**连接池实时状态**。为什么这个数很重要：
       · "正在使用中的连接数"如果一直贴着上限下不来，就说明有害虫——
         某个地方借了连接没还（异常路径最容易漏）。这种问题靠等故障报警发现太晚；
       · 把它放进健康检查，监控上就能看到趋势，提前发现"池子在慢慢被耗干"。

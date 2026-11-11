@@ -1,5 +1,5 @@
 <template>
-  <!-- 成员管理（P1-C）：组织管理员管本组织的人；平台超管可切换组织 -->
+  <!-- 成员管理：组织管理员管本组织的人；平台超管可切换组织 -->
   <div class="page">
     <div class="page-head">
       <div class="head-left">
@@ -95,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-// 成员管理页（P1-C）：只有管理员能进（路由守卫 + 后端双重校验）
+// 成员管理页：只有管理员能进（路由守卫 + 后端双重校验）
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'

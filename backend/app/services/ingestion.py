@@ -1,6 +1,6 @@
 """入库管线编排：文档解析 → 切块 → 向量化 → 写入 Qdrant → 更新状态。
 
-- 每个文档对应数据库里的一条解析任务（P2-15），由工作进程领取执行，不阻塞网页请求；
+- 每个文档对应数据库里的一条解析任务，由工作进程领取执行，不阻塞网页请求；
   任务可重试、可在重启后恢复，多进程部署也不会重复解析同一个文档；
 - 文档表自带状态机（pending→parsing→embedding→ready/failed）+ progress 百分比，
   前端轮询即可看到实时进度；
@@ -181,7 +181,7 @@ async def process_document(doc_id: int) -> None:
 
 
 # 说明：这里曾经有一个 start_ingestion(doc_id)，作用是"在内存里起一个后台任务去解析"。
-# P2-15 之后它已被**删除**，改成由接口层调用 job_queue.enqueue(db, doc_id, kb_id) 排队。
+# 现在的做法是由接口层调用 job_queue.enqueue(db, doc_id, kb_id) 排队。
 #
 # 为什么必须删掉而不是留着兼容：
 #   它内部用的是"全局数据库连接"（AsyncSessionLocal），绕开了请求自己的会话。留着它，

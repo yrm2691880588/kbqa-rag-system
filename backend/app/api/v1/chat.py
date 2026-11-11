@@ -103,7 +103,7 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
     )
     history = [{"role": m.role, "content": m.content} for m in hist_rows]
 
-    # 1.4) 短期限流（P2-16）：每分钟最多问几次。
+    # 1.4) 短期限流：每分钟最多问几次。
     #      为什么在额度之前：额度是"按天/按月"的账，挡不住"某一分钟涌进来 200 个请求"；
     #      而外部大模型接口本身有速率限制，撞上去会返回 429（用户看到的是报错）。
     #      这一层负责削平尖峰。返回 429 的意思是"太频繁了"，与额度用完（402，要付费）区分开。
@@ -180,7 +180,7 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                         "blocked": blocked,
                     })
                 else:
-                    # cache_scope 传组织 id（P2-16）：缓存键里带上"是谁在问"，
+                    # cache_scope 传组织 id：缓存键里带上"是谁在问"，
                     # 保证企业 A 问过的问题不会把答案发给企业 B。
                     async for event, data in stream_answer(
                         question, history, kb_ids, cache_scope=f"org:{org_id}"

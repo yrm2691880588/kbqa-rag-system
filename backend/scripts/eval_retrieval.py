@@ -1,4 +1,4 @@
-"""检索质量评估脚本（P2-21）：把"检索到底准不准"变成一组能对比的数字。
+"""检索质量评估脚本：把"检索到底准不准"变成一组能对比的数字。
 
 怎么用（backend 目录下）：
 
@@ -93,7 +93,7 @@ async def run_one(case: dict, kb_ids: list[int] | None, top_k: int) -> CaseResul
 
 
 async def main() -> int:
-    parser = argparse.ArgumentParser(description="检索质量评估（P2-21）")
+    parser = argparse.ArgumentParser(description="检索质量评估")
     parser.add_argument("--set", default=str(DEFAULT_SET), help="评估集 JSON 路径")
     parser.add_argument("--top-k", type=int, default=5, help="每条问题看前几条结果（默认 5）")
     parser.add_argument("--no-rerank", action="store_true",

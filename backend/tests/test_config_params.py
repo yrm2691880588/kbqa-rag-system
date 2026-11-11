@@ -1,4 +1,4 @@
-"""可调参数收口测试（P2-20）。
+"""可调参数收口测试。
 
 这个文件在测什么（大白话）：
     以前有些数字是**直接写死在代码里**的 —— 比如"单个文件最大 100MB"、
@@ -213,7 +213,7 @@ class NoDeadConfigTestCase(unittest.TestCase):
         self.assertEqual(unused, [], f"这些配置项没有任何代码在读，改了也不会生效：{unused}")
 
     def test_new_param_fields_are_wired(self):
-        """显式点名 P2-20 新加的几项（万一上面那条被改成永远通过，这条还兜得住）。"""
+        """显式点名后加的几项（万一上面那条被改成永远通过，这条还兜得住）。"""
         for name in ("max_upload_mb", "llm_request_timeout", "llm_connect_timeout",
                      "health_check_timeout", "health_llm_probe_timeout"):
             self.assertIn(name, Settings.model_fields, f"{name} 配置项不见了")

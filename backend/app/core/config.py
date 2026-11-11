@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     embedding_max_retries: int = 3          # 网络抖动时重试次数
     embedding_timeout: int = 60             # 单次请求超时（秒）
 
-    # --- 重排模型（P2-21 检索精度优化）---
+    # --- 重排模型（检索精度优化）---
     # 重排是干什么的（大白话）：
     #   向量检索是"粗筛"——它把问题和资料都变成一串数字比距离，快，但不够准；
     #   重排是"精挑"——把粗筛出来的十几条交给一个专门的小模型，
@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     retrieval_chunks_per_doc: int = 2    # 同一文档内最多取几条片段（防刷屏）
     llm_max_history_rounds: int = 8     # 多轮对话中最多携带几轮历史进上下文
     llm_max_tokens: int = 2048          # 单次回答最大输出长度
-    # 说明：这里曾经有一个 llm_stream 开关（是否流式输出），已删除（P2-23 代码收口）。
+    # 说明：这里曾经有一个 llm_stream 开关（是否流式输出），已删除（代码收口）。
     # 原因：网页端问答**只**支持流式（打字机效果是产品体验的一部分，关了就没意义）；
     # 需要"一次拿完整回答"的场景已经由对外接口 POST /open/chat 提供（非流式）。
     # 留着一个谁都不读的开关，只会让运维以为改了有用。
@@ -168,7 +168,7 @@ class Settings(BaseSettings):
     # 自定义词表路径（留空则用内置的 app/data/sensitive_words.txt）
     content_filter_wordlist: str = ""
 
-    # ===== 可调参数收口（P2-20）=====
+    # ===== 可调参数收口=====
     # 为什么要收口：以前这些数字直接写死在代码里，客户想"把上传上限调到 200MB"
     # 或者"把超时放宽一点"，都得改代码、重新打包、重新部署。
     # 收进配置之后，改一个环境变量、重启即可。
@@ -192,7 +192,7 @@ class Settings(BaseSettings):
     # 健康探活里"真实调用一次对话模型"那一步的超时（秒），比上面宽松些
     health_llm_probe_timeout: float = 15.0
 
-    # ===== 数据库连接池（P2-17）=====
+    # ===== 数据库连接池=====
     # 大白话：连接池就是"预先备好几条到数据库的电话线，谁用谁占，用完立刻还"。
     # 下面这几个数决定"一个进程最多能同时拿几条线"，配错了会在高峰时突然连不上数据库
     # （而平时完全正常，属于最难查的一类故障）。
@@ -207,7 +207,7 @@ class Settings(BaseSettings):
     web_concurrency: int = 1
     db_max_connections: int = 100      # 数据库端允许的最大连接数（PostgreSQL 默认 100）
 
-    # ===== 数据清理与归档（P2-22）=====
+    # ===== 数据清理与归档=====
     # 问答日志与聊天消息只保留这么多天，超出的会被清理脚本删除（删前先归档成文件）。
     # 为什么要有上限：这两类数据只会增加，一天 500 次问答一年就是 18 万条，
     # 时间长了数据库查询变慢、备份文件也越来越大。
@@ -217,7 +217,7 @@ class Settings(BaseSettings):
     # 清理前先把要删的内容导出到这个目录（一个文件一类数据，JSONL 格式）
     archive_dir: str = "data/archive"
 
-    # ===== AI 调用治理（P2-16）=====
+    # ===== AI 调用治理=====
     # ① 短期限流：每个组织每分钟最多问几次（0 = 不限）。
     #    为什么要它：按天/按月的额度挡不住"某一分钟涌进 200 个请求"，
     #    超了会被大模型接口返回 429（用户看到的是报错）。这一层负责削平尖峰。
@@ -239,7 +239,7 @@ class Settings(BaseSettings):
     qa_cache_ttl_seconds: int = 3600    # 缓存有效期（秒）
     qa_cache_max_entries: int = 500     # 最多缓存多少条（超出淘汰最久未用的）
 
-    # ===== 文档解析队列（P2-15）=====
+    # ===== 文档解析队列=====
     # 由独立的工作进程从数据库任务表里领活干，好处是：进程重启任务不丢、
     # 多进程不会重复解析同一个文档、失败会自动重试。
     ingestion_worker_enabled: bool = True   # 总开关（想单独起工作进程时可关掉网页进程里的它）
@@ -247,7 +247,7 @@ class Settings(BaseSettings):
     ingestion_max_attempts: int = 3         # 一个文档最多解析几次（防"文件本身坏了"无限重试烧钱）
     ingestion_stale_seconds: int = 900      # 超过这么久还卡在"处理中"，就认为领它的进程已经死了
 
-    # ===== 日志（P2-19）=====
+    # ===== 日志=====
     # 日志格式：text = 人看的（本机开发用）；json = 日志系统看的（能被 ELK/Loki 直接检索）
     log_format: str = "text"
     # 说明：日志里会自动给每条加"请求编号"，并对密钥/手机号做脱敏（见 core/logging_setup.py）。
@@ -259,7 +259,7 @@ class Settings(BaseSettings):
         return self.database_url.startswith("sqlite")
 
     def pool_budget(self) -> dict:
-        """算一算"最多会占用数据库多少条连接"（P2-17）。
+        """算一算"最多会占用数据库多少条连接"。
 
         为什么要显式算这个数（大白话）：
             一个进程的连接池最多能拿 pool_size + max_overflow 条；

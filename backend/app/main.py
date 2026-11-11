@@ -16,7 +16,7 @@ from app.db.init_db import init_db
 from app.db.session import engine
 from app.services.vector_store import close_client, ensure_collection
 
-# 日志配置（P2-19）：级别、格式（text/json）、脱敏、请求编号都由配置决定。
+# 日志配置：级别、格式（text/json）、脱敏、请求编号都由配置决定。
 # 紧跟配置初始化执行，保证"服务还没起来时"的日志也是这个格式。
 setup_logging(level=settings.log_level, fmt=settings.log_format)
 logger = logging.getLogger("kbqa.main")
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     """应用启动时初始化数据库/管理员/向量库集合；关闭时释放连接池。"""
     # 第一道关：配置自检（生产环境关键配置缺失会直接拒绝启动）
     run_startup_checks()
-    # 把配置里的参数应用到 AI 治理组件（限流/熔断/问题缓存，P2-16）。
+    # 把配置里的参数应用到 AI 治理组件（限流/熔断/问题缓存）。
     # 为什么必须在启动时做一次：这些组件的默认值是"全关"（安全默认），
     # 不主动读配置的话，客户在 .env 里配了限流也不会生效 —— 这种"配了不生效"最难查。
     ai_guard.reload_from_settings()
@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
         await ensure_collection()
     except Exception as e:
         logger.warning("Qdrant 集合初始化失败（如向量库未启动会在此提示）：%s", e)
-    # 拉起解析队列的工作进程（P2-15）：它负责把文档真正解析入库。
+    # 拉起解析队列的工作进程：它负责把文档真正解析入库。
     # 放在这里而不是"上传时起一个任务"，是为了让解析工作能跨进程重启存活。
     worker.start_worker()
     logger.info("服务启动完成，接口前缀：%s", settings.api_prefix)
@@ -69,7 +69,7 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.expose_docs else None,
 )
 
-# 请求追踪（P2-19）：给每个请求一个编号，让"一次请求的所有日志"能串起来。
+# 请求追踪：给每个请求一个编号，让"一次请求的所有日志"能串起来。
 # 注意中间件的顺序：后加的先执行。放在 CORS 之前加，让它包在最外层 ——
 # 这样连"被 CORS 拦掉的请求"也会有编号和访问日志（这类请求恰恰最需要排查：
 # 前端报"跨域失败"时，你得能看出请求到底有没有打到后端）。

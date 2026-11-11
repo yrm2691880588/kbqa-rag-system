@@ -1,4 +1,4 @@
-// 管理后台 API（P1-C）：成员管理 + 问答日志
+// 管理后台 API：成员管理 + 问答日志
 import http from './http'
 import type { UserInfo } from '@/stores/auth'
 

@@ -102,7 +102,7 @@ def collect_startup_issues(cfg: Settings) -> tuple[list[str], list[str]]:
     if prod and any(mark in origin for origin in cfg.cors_origins for mark in LOCAL_HOST_MARKS):
         warnings.append("CORS_ORIGINS 仍包含本机地址：生产环境应填写真实访问域名")
 
-    # 8) 短信通道（P1-H）
+    # 8) 短信通道
     #
     # 注意：这一项只告警、不拒绝启动。原因是手机号登录只是**可选入口**
     # （用户名密码登录不受影响），而有些私有部署根本没有短信资质 ——
@@ -125,7 +125,7 @@ def collect_startup_issues(cfg: Settings) -> tuple[list[str], list[str]]:
             "若本系统要同时服务多家客户，请开启该开关（注册必须凭组织邀请码）"
         )
 
-    # 11) 数据库连接池够不够（P2-17）
+    # 11) 数据库连接池够不够
     # 大白话：每个进程都会设一个"到数据库的电话线架子"，架子上的线数是有限的。
     # 生产环境通常跑好几个进程，所以"总用量 = 进程数 × 每个架子的线数"。
     # 只要这个总数超过数据库允许的上限，高峰期就会连不上数据库 ——
@@ -149,7 +149,7 @@ def collect_startup_issues(cfg: Settings) -> tuple[list[str], list[str]]:
 
 
 def _check_sms_config(cfg: Settings, prod: bool, warnings: list[str]) -> None:
-    """校验短信通道配置（P1-H）。
+    """校验短信通道配置。
 
     ⚠️ 这里为什么只"告警"而**不拒绝启动**：
         手机号登录只是系统的一个可选入口（用户名密码登录完全不受影响）。

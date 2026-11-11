@@ -1,4 +1,4 @@
-"""对外 API 与 API Key 的接口数据结构（P1-G）。"""
+"""对外 API 与 API Key 的接口数据结构。"""
 
 import datetime as dt
 
