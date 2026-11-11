@@ -78,7 +78,13 @@ jobs:
       - name: 安装 Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Node 22 而不是 20：
+          #   · 前端测试文件是 .ts，Node 22+ 能原生运行（Node 20 会报
+          #     ERR_UNKNOWN_FILE_EXTENSION），不需要额外的编译步骤或依赖；
+          #   · vite 5 的 engines 要求 ^18 || >=20，22 完全兼容。
+          # 之前用 Node 20 时，本地（24）能跑测试、CI 却直接失败 ——
+          # 这类"本地过、CI 挂"的差异必须在 CI 配置里写清楚原因。
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
