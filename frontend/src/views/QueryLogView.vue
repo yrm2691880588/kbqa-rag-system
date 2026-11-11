@@ -249,26 +249,26 @@ onMounted(load)
 .stat-card {
   flex: 1 1 130px;
   background: #fff;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--border-1);
   border-radius: 10px;
   padding: 12px 16px;
 }
 .stat-card.ok {
-  border-color: #b7dfc4;
-  background: #f2faf4;
+  border-color: var(--success);
+  background: var(--success-bg);
 }
 .stat-card.bad {
-  border-color: #f3c8c1;
-  background: #fdf3f1;
+  border-color: var(--danger);
+  background: var(--danger-bg);
 }
 .stat-num {
   font-size: 22px;
   font-weight: 700;
-  color: #303133;
+  color: var(--text-1);
 }
 .stat-label {
   font-size: 12.5px;
-  color: #909399;
+  color: var(--text-4);
   margin-top: 2px;
 }
 
@@ -284,7 +284,7 @@ onMounted(load)
 }
 .pager-info {
   font-size: 13px;
-  color: #909399;
+  color: var(--text-4);
 }
 
 /* 详情抽屉 */
@@ -296,25 +296,25 @@ onMounted(load)
 }
 .d-label {
   flex: 0 0 68px;
-  color: #909399;
+  color: var(--text-4);
 }
 .d-val {
   flex: 1;
-  color: #303133;
+  color: var(--text-1);
   word-break: break-word;
 }
 .d-title {
   margin: 18px 0 10px;
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--text-1);
 }
 .hit {
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--border-1);
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 10px;
-  background: #fafbfc;
+  background: var(--bg-hover);
 }
 .hit-head {
   display: flex;
@@ -325,15 +325,15 @@ onMounted(load)
 }
 .hit-doc {
   font-weight: 600;
-  color: #409eff;
+  color: var(--brand-500);
 }
 .hit-score {
-  color: #909399;
+  color: var(--text-4);
 }
 .hit-text {
   font-size: 12.5px;
   line-height: 1.7;
-  color: #606266;
+  color: var(--text-3);
   max-height: 160px;
   overflow-y: auto;
   white-space: pre-wrap;

@@ -1,12 +1,38 @@
 <template>
   <!-- 登录页：密码登录 / 手机号验证码登录 双模式 -->
   <div class="auth-page">
-    <el-card class="auth-card">
-      <div class="title">
-        <el-icon :size="26" color="#409eff"><ChatDotRound /></el-icon>
-        <h2>企业知识库问答系统</h2>
+    <!-- 左侧品牌区：登录前先告诉用户"这是什么、能做什么" -->
+    <aside class="brand-panel">
+      <div class="brand-logo">
+        <el-icon :size="26"><ChatDotRound /></el-icon>
       </div>
-      <p class="subtitle">电商商品资料智能问答 · 请登录后使用</p>
+      <h1 class="brand-title">知识库问答系统</h1>
+      <p class="brand-desc">
+        把商品资料、售后政策、内部文档交给它，<br />
+        用自然语言提问，得到带出处的答案。
+      </p>
+      <ul class="brand-points">
+        <li>
+          <el-icon><Search /></el-icon>
+          <span><b>精准召回</b>：只从你的资料里找答案，不乱编</span>
+        </li>
+        <li>
+          <el-icon><Document /></el-icon>
+          <span><b>带出处</b>：每条回答标注来自哪份文档</span>
+        </li>
+        <li>
+          <el-icon><Lock /></el-icon>
+          <span><b>数据隔离</b>：各组织资料互不可见</span>
+        </li>
+      </ul>
+    </aside>
+
+    <!-- 右侧登录卡 -->
+    <el-card class="auth-card" shadow="never">
+      <div class="title">
+        <h2>欢迎回来</h2>
+      </div>
+      <p class="subtitle">登录后即可开始提问</p>
 
       <el-tabs v-model="tab" stretch>
         <!-- ============ 方式一：账号密码登录 ============ -->
@@ -146,7 +172,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { User, Lock, Iphone, Message } from '@element-plus/icons-vue'
+import { User, Lock, Iphone, Message, Search, Document, ChatDotRound } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import * as authApi from '@/api/auth'
 
@@ -379,42 +405,162 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* 整页：左右分栏 */
 .auth-page {
-  height: 100vh;
+  min-height: 100vh;
+  display: flex;
+  background: var(--bg-card);
+}
+
+/* ---------- 左侧品牌区 ---------- */
+.brand-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 72px;
+  color: #fff;
+  /* 品牌渐变：从深蓝到主色，比纯色更有质感 */
+  background:
+    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.12), transparent 45%),
+    linear-gradient(140deg, var(--brand-800) 0%, var(--brand-600) 55%, var(--brand-500) 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+/* 背景装饰圆：让纯色背景不显得空 */
+.brand-panel::after {
+  content: '';
+  position: absolute;
+  right: -120px;
+  bottom: -120px;
+  width: 380px;
+  height: 380px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.brand-logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #eaf3ff 0%, #f5f7fa 100%);
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(6px);
+  margin-bottom: 28px;
+  /* 避免遮住 ::after 装饰圆 */
+  position: relative;
+  z-index: 1;
 }
 
+.brand-title {
+  margin: 0 0 16px;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  position: relative;
+  z-index: 1;
+}
+
+.brand-desc {
+  margin: 0 0 36px;
+  font-size: 15px;
+  line-height: 1.85;
+  color: rgba(255, 255, 255, 0.82);
+  position: relative;
+  z-index: 1;
+}
+
+.brand-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.brand-points li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.brand-points li b {
+  color: #fff;
+  font-weight: 600;
+}
+
+.brand-points .el-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.12);
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+/* ---------- 右侧登录卡 ---------- */
 .auth-card {
-  width: 420px;
-  padding: 12px 8px;
+  width: 480px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: none;
+  box-shadow: none;
+  background: var(--bg-card);
+  /* 关键：不让卡片被 flex 拉伸到整高，同时让内部的 body 垂直居中。
+     否则表单会顶到屏幕最上面，下面留一大片空白（实际截图看到的问题）。 */
+  align-self: center;
+  border-radius: 0;
+}
+
+.auth-card :deep(.el-card__body) {
+  padding: 0 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .title {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .title h2 {
   margin: 0;
-  font-size: 20px;
-  color: #303133;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-1);
+  letter-spacing: -0.02em;
 }
 
 .subtitle {
   text-align: center;
-  color: #909399;
-  font-size: 13px;
-  margin: 8px 0 18px;
+  color: var(--text-4);
+  font-size: var(--font-sm);
+  margin: 0 0 28px;
 }
 
 .submit {
   width: 100%;
-  margin-top: 6px;
+  margin-top: 8px;
+  height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
 }
 
 /* "忘记密码"一行：右对齐，不抢主按钮的视觉重心 */
@@ -426,74 +572,36 @@ onMounted(() => {
 
 .forgot-tip {
   margin: 0 0 14px;
-  font-size: 13px;
+  font-size: var(--font-sm);
   line-height: 1.7;
-  color: #606266;
+  color: var(--text-3);
 }
 
 .footer {
-  margin-top: 18px;
+  margin-top: 26px;
   text-align: center;
-  font-size: 14px;
-  color: #909399;
+  font-size: var(--font-sm);
+  color: var(--text-4);
 }
 
-.footer a {
-  color: #409eff;
-  text-decoration: none;
+/* 表单间距更松一点，别挤在一起 */
+.auth-card :deep(.el-form-item) {
+  margin-bottom: 20px;
 }
 
-/* 图形验证码一行 */
-.captcha-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-}
-
-.captcha-input {
-  width: 110px;
-  flex: none;
-}
-
-.captcha-img {
-  width: 108px;
-  height: 38px;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  overflow: hidden;
-  cursor: pointer;
-  flex: none;
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.captcha-img img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.captcha-loading {
-  font-size: 12px;
-  color: #909399;
-}
-
-/* 短信验证码一行 */
-.sms-row {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-}
-
-.send-btn {
-  width: 130px;
-  flex: none;
-}
-
-.dev-hint {
-  margin-bottom: 12px;
+/* ---------- 窄屏：左侧品牌区收起，只留表单 ----------
+   这是移动端"预留空间"的第一步：手机上不显示品牌区，
+   避免把表单挤到看不见。 */
+@media (max-width: 900px) {
+  .brand-panel {
+    display: none;
+  }
+  .auth-card {
+    width: 100%;
+    min-height: 100vh;
+  }
+  .auth-card :deep(.el-card__body) {
+    padding: 0 32px;
+  }
 }
 </style>

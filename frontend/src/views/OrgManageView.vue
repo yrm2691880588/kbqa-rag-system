@@ -335,16 +335,16 @@ onMounted(loadOrgs)
 }
 
 .muted {
-  color: #c0c4cc;
+  color: var(--text-5);
 }
 
 .usage-warn {
-  color: #e6a23c;
+  color: var(--warning);
   font-weight: 500;
 }
 
 .usage-over {
-  color: #f56c6c;
+  color: var(--danger);
   font-weight: 600;
 }
 </style>

@@ -1,0 +1,153 @@
+/**
+ * ============================================================
+ * 设计系统（全站唯一样式来源）
+ * ============================================================
+ *
+ * 为什么要有这个文件：
+ *   改造前项目里 **0 个 CSS 变量**，颜色硬编码 160+ 处
+ *   （#909399 出现 31 次、#409eff 26 次…）。
+ *   结果就是：想调一下主题色，要改几十个文件，还容易漏。
+ *   更糟的是各页面自己定颜色，风格永远统一不了。
+ *
+ * 现在的规则：
+ *   · 组件里**不再写死颜色**，一律用 var(--xxx)
+ *   · 想换主题只改这一个文件
+ *   · 所有颜色都成体系（主色 9 级、灰阶 9 级、语义色各 3 级）
+ *
+ * 命名参考了 Element Plus 的 token 命名习惯，便于对照。
+ */
+
+:root {
+  /* ---------- 品牌主色（靖蓝）----------
+     为什么选 9 级而不是只定一个主色：
+     按钮悬停、按下、禁用、浅色背景、边框……每个场景都需要
+     不同深浅的同一色系。只定一个色就会到处用透明度凑，
+     结果是深浅不一、显得脏。 */
+  --brand-50: #eef1ff;
+  --brand-100: #dce3ff;
+  --brand-200: #bcc8ff;
+  --brand-300: #93a6ff;
+  --brand-400: #6d84fb;
+  --brand-500: #4f6ef7;   /* 主色：按钮、链接、选中态 */
+  --brand-600: #3d57db;
+  --brand-700: #2f44b4;
+  --brand-800: #26378f;
+  --brand-900: #1e2b6b;
+
+  /* ---------- 灰阶（文字与背景）----------
+     改造前项目里文字色有 #303133 / #606266 / #909399 / #a8abb2 / #c0c4cc
+     五个值，但没有规律。这里收敛成阶梯，每个层级用途固定。 */
+  --text-1: #1f2329;      /* 主标题：页面大标题 */
+  --text-2: #3d434d;      /* 正文：主要内容 */
+  --text-3: #646a73;      /* 次要：说明文字 */
+  --text-4: #8f959e;      /* 辅助：时间、计数 */
+  --text-5: #b8bcc4;      /* 占位：placeholder、禁用 */
+  --text-inverse: #ffffff; /* 深色背景上的文字 */
+
+  --bg-page: #f6f7f9;     /* 页面底色 */
+  --bg-card: #ffffff;     /* 卡片 */
+  --bg-hover: #f2f3f5;    /* 悬停 */
+  --bg-active: var(--brand-50); /* 选中 */
+
+  --border-1: #e5e6eb;    /* 常规边框 */
+  --border-2: #f0f1f3;    /* 分割线 */
+
+  /* ---------- 语义色 ----------
+     每个都给「主色 / 浅底」两个值：
+     浅底用于提示条背景，主色用于文字和边框。 */
+  --success: #12b76a;
+  --success-bg: #ecfdf3;
+  --warning: #f79009;
+  --warning-bg: #fffaeb;
+  --danger: #f04438;
+  --danger-bg: #fef3f2;
+  --info: var(--brand-500);
+  --info-bg: var(--brand-50);
+
+  /* ---------- 深色侧边栏 ----------
+     现代 SaaS 风格的关键：侧边栏用深色，
+     与浅色内容区形成明确分区，视觉上更"有设计感"。 */
+  --aside-bg: #1d2129;
+  --aside-bg-hover: #2a2f3a;
+  --aside-text: #a9aeb8;
+  --aside-text-active: #ffffff;
+  --aside-active-bg: var(--brand-600);
+
+  /* ---------- 圆角 ----------
+     统一圆角是"看起来精致"最便宜的手段。
+     三个层级够用：小元素、卡片、胶囊。 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* ---------- 阴影 ----------
+     改造前卡片全是 1px 灰边（看起来像表格拼的）。
+     改用「极淡阴影 + 无边框」会立刻显得现代。
+     三级：静止、悬停、浮层（弹窗/下拉）。 */
+  --shadow-sm: 0 1px 2px rgba(31, 35, 41, 0.05);
+  --shadow-md: 0 2px 8px rgba(31, 35, 41, 0.08);
+  --shadow-lg: 0 8px 24px rgba(31, 35, 41, 0.12);
+
+  /* ---------- 间距 ----------
+     用 4 的倍数，避免出现 13px、17px 这种随手写的值。 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ---------- 字号 ----------
+     改造前字号也很随意。固定成 5 级，用途明确。 */
+  --font-xs: 12px;    /* 辅助信息 */
+  --font-sm: 13px;    /* 次要文字 */
+  --font-base: 14px;  /* 正文 */
+  --font-lg: 16px;    /* 小标题 */
+  --font-xl: 20px;    /* 页面标题 */
+  --font-2xl: 28px;   /* 大数字 */
+
+  /* ---------- 过渡 ----------
+     统一的动效时长，避免有的地方 0.15s、有的 0.3s。 */
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.25s ease;
+}
+
+/* ============================================================
+ * Element Plus 主题覆盖
+ * ============================================================
+ * Element Plus 自己有一套 --el-* 变量。
+ * 把我们的品牌色映射过去，这样它内置组件
+ * （按钮/输入框/表格…）自动跟着变，不用逐个改。
+ */
+:root {
+  --el-color-primary: var(--brand-500);
+  --el-color-primary-light-3: var(--brand-400);
+  --el-color-primary-light-5: var(--brand-300);
+  --el-color-primary-light-7: var(--brand-200);
+  --el-color-primary-light-8: var(--brand-100);
+  --el-color-primary-light-9: var(--brand-50);
+  --el-color-primary-dark-2: var(--brand-600);
+
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warning);
+  --el-color-danger: var(--danger);
+  --el-color-error: var(--danger);
+
+  --el-text-color-primary: var(--text-1);
+  --el-text-color-regular: var(--text-2);
+  --el-text-color-secondary: var(--text-3);
+  --el-text-color-placeholder: var(--text-5);
+
+  --el-border-color: var(--border-1);
+  --el-border-color-light: var(--border-2);
+  --el-border-radius-base: var(--radius-sm);
+  --el-border-radius-small: var(--radius-sm);
+
+  --el-font-size-base: var(--font-base);
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-page: var(--bg-page);
+
+  --el-box-shadow-light: var(--shadow-sm);
+}

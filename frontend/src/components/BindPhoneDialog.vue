@@ -160,7 +160,7 @@ onMounted(loadCaptcha)
 .captcha-img {
   width: 108px;
   height: 38px;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--border-1);
   border-radius: 4px;
   overflow: hidden;
   cursor: pointer;
@@ -170,7 +170,7 @@ onMounted(loadCaptcha)
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-4);
 }
 
 .captcha-img img {

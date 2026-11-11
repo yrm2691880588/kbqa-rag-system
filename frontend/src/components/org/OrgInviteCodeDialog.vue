@@ -88,7 +88,7 @@ async function copyCode() {
 }
 
 .code-org {
-  color: #909399;
+  color: var(--text-4);
   font-size: 13px;
 }
 </style>

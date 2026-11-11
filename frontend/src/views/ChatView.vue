@@ -682,8 +682,8 @@ async function scrollBottom(smooth = false) {
 .side {
   width: 280px;
   min-width: 280px;
-  background: #f7f8fa;
-  border-right: 1px solid #e4e7ed;
+  background: var(--bg-page);
+  border-right: 1px solid var(--border-2);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -705,7 +705,7 @@ async function scrollBottom(smooth = false) {
   padding: 0 14px 10px;
 }
 .scope-label {
-  color: #909399;
+  color: var(--text-4);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -717,22 +717,37 @@ async function scrollBottom(smooth = false) {
 .session-item {
   position: relative;
   padding: 10px 30px 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  margin-bottom: 4px;
-  transition: background 0.15s;
+  margin-bottom: 2px;
+  transition: background var(--transition-fast);
+  border: 1px solid transparent;
 }
 .session-item:hover {
-  background: #eef0f3;
+  background: var(--bg-hover);
 }
+/* 选中态：白色卡片 + 主色左边条，比整块浅蓝更精致，也不与深色导航打架 */
 .session-item.active {
-  background: #ecf5ff;
+  background: var(--bg-card);
+  border-color: var(--border-2);
+  box-shadow: var(--shadow-sm);
+}
+.session-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 2px 2px 0;
+  background: var(--brand-500);
 }
 .s-title {
   display: flex;
   align-items: center;
   gap: 5px;
-  color: #303133;
+  color: var(--text-1);
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
@@ -743,11 +758,11 @@ async function scrollBottom(smooth = false) {
   text-overflow: ellipsis;
 }
 .s-icon {
-  color: #409eff;
+  color: var(--brand-500);
   flex-shrink: 0;
 }
 .s-meta {
-  color: #a8abb2;
+  color: var(--text-4);
   font-size: 11px;
   margin-top: 3px;
 }
@@ -756,7 +771,7 @@ async function scrollBottom(smooth = false) {
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  color: #c0c4cc;
+  color: var(--text-5);
   padding: 4px;
   border-radius: 4px;
   opacity: 0;
@@ -766,8 +781,8 @@ async function scrollBottom(smooth = false) {
   opacity: 1;
 }
 .s-del:hover {
-  color: #f56c6c;
-  background: #fde2e2;
+  color: var(--danger);
+  background: var(--danger-bg);
 }
 .side-loading {
   flex: 1;
@@ -794,10 +809,10 @@ async function scrollBottom(smooth = false) {
   justify-content: center;
   gap: 14px;
   padding: 24px;
-  color: #606266;
+  color: var(--text-3);
 }
 .welcome h2 {
-  color: #303133;
+  color: var(--text-1);
   font-size: 24px;
 }
 .tips {
@@ -808,8 +823,8 @@ async function scrollBottom(smooth = false) {
   max-width: 560px;
 }
 .tip-card {
-  background: #f5f7fa;
-  border: 1px solid #e4e7ed;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-1);
   border-radius: 10px;
   padding: 12px 14px;
   font-size: 13px;
@@ -817,14 +832,14 @@ async function scrollBottom(smooth = false) {
   transition: all 0.15s;
 }
 .tip-card:hover {
-  border-color: #409eff;
-  color: #409eff;
-  background: #ecf5ff;
+  border-color: var(--brand-500);
+  color: var(--brand-500);
+  background: var(--brand-50);
 }
 
 .chat-head {
   padding: 12px 20px;
-  border-bottom: 1px solid #e4e7ed;
+  border-bottom: 1px solid var(--border-1);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -832,7 +847,7 @@ async function scrollBottom(smooth = false) {
 .chat-title {
   font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--text-1);
 }
 .rename-btn {
   margin-left: 4px;
@@ -855,43 +870,56 @@ async function scrollBottom(smooth = false) {
   flex-direction: row-reverse;
 }
 .avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
   color: #fff;
   flex-shrink: 0;
-  background: linear-gradient(135deg, #409eff, #79bbff);
+  /* AI 头像：品牌渐变 */
+  background: linear-gradient(135deg, var(--brand-400), var(--brand-600));
+  box-shadow: 0 2px 6px rgba(79, 110, 247, 0.25);
 }
+/* 用户头像：中性深灰。
+   原来用绿色是为了区分，但绿色与全站蓝色冲突；
+   改用中性色既有区分度，又不会引入第三种色系。 */
 .msg-row.user .avatar {
-  background: linear-gradient(135deg, #67c23a, #95d475);
+  background: linear-gradient(135deg, var(--text-3), var(--text-3));
+  box-shadow: 0 2px 6px rgba(75, 85, 99, 0.25);
 }
 .bubble {
   max-width: min(76%, 780px);
 }
 .user-text {
-  background: #95ec69;
-  background: linear-gradient(135deg, #b3e19d, #95ec69);
-  color: #1f2d3d;
-  padding: 10px 14px;
-  border-radius: 12px 2px 12px 12px;
+  /* 原来是微信绿，与全站蓝色系冲突。
+     改成品牌蓝实色 + 白字：对比度高、一眼能分清"我说的"和"AI 说的"。 */
+  background: linear-gradient(135deg, var(--brand-500), var(--brand-600));
+  color: #fff;
+  padding: 11px 15px;
+  border-radius: var(--radius-md) var(--radius-sm) var(--radius-md) var(--radius-md);
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.6;
-  font-size: 14px;
+  line-height: 1.65;
+  font-size: var(--font-base);
+  box-shadow: 0 2px 8px rgba(79, 110, 247, 0.22);
 }
 .answer {
-  background: #f5f7fa;
-  padding: 12px 16px;
-  border-radius: 2px 12px 12px 12px;
+  /* 原来是 var(--bg-hover) 灰底，与页面底色几乎一样，"浮"不起来。
+     改成白底 + 极淡阴影，与用户气泡形成明确对比。 */
+  background: var(--bg-card);
+  padding: 13px 16px;
+  border-radius: var(--radius-sm) var(--radius-md) var(--radius-md) var(--radius-md);
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.75;
-  font-size: 14px;
-  color: #303133;
+  font-size: var(--font-base);
+  color: var(--text-2);
+  border: 1px solid var(--border-2);
+  box-shadow: var(--shadow-sm);
 }
 .cite-sup {
   display: inline-block;
@@ -902,33 +930,33 @@ async function scrollBottom(smooth = false) {
   font-size: 11px;
   line-height: 16px;
   border-radius: 8px;
-  color: #409eff;
-  background: #ecf5ff;
-  border: 1px solid #d9ecff;
+  color: var(--brand-500);
+  background: var(--brand-50);
+  border: 1px solid var(--brand-100);
   cursor: pointer;
   vertical-align: super;
 }
 .cite-sup:hover {
-  background: #409eff;
+  background: var(--brand-500);
   color: #fff;
 }
 
 /* 思考过程 */
 .think-box {
   margin-bottom: 8px;
-  background: #fdf6ec;
-  border: 1px solid #f3d19e;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 12px;
 }
 .think-hint {
-  color: #e6a23c;
+  color: var(--warning);
   cursor: pointer;
   user-select: none;
 }
 .think-text {
-  color: #8d6a3c;
+  color: var(--warning);
   margin-top: 6px;
   line-height: 1.6;
   max-height: 160px;
@@ -941,7 +969,7 @@ async function scrollBottom(smooth = false) {
   display: flex;
   align-items: center;
   gap: 5px;
-  background: #f5f7fa;
+  background: var(--bg-hover);
   border-radius: 2px 12px 12px 12px;
   padding: 14px 16px;
   width: fit-content;
@@ -950,14 +978,14 @@ async function scrollBottom(smooth = false) {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #409eff;
+  background: var(--brand-500);
   animation: bounce 1.2s infinite ease-in-out;
 }
 .dot:nth-child(2) { animation-delay: 0.15s; }
 .dot:nth-child(3) { animation-delay: 0.3s; }
 .thinking-label {
   margin-left: 6px;
-  color: #909399;
+  color: var(--text-4);
   font-size: 13px;
 }
 @keyframes bounce {
@@ -977,19 +1005,19 @@ async function scrollBottom(smooth = false) {
   align-items: center;
   gap: 6px;
   background: #fff;
-  border: 1px solid #d9ecff;
+  border: 1px solid var(--brand-100);
   border-radius: 6px;
   padding: 4px 10px;
   cursor: pointer;
   font-size: 12px;
-  color: #409eff;
+  color: var(--brand-500);
   transition: all 0.15s;
 }
 .ref-item:hover {
-  background: #ecf5ff;
+  background: var(--brand-50);
 }
 .ref-badge {
-  background: #409eff;
+  background: var(--brand-500);
   color: #fff;
   border-radius: 50%;
   width: 18px;
@@ -1006,14 +1034,14 @@ async function scrollBottom(smooth = false) {
   white-space: nowrap;
 }
 .ref-score {
-  color: #c0c4cc;
+  color: var(--text-5);
   font-size: 11px;
 }
 
 .no-hit-tip {
   margin-top: 8px;
   font-size: 13px;
-  color: #e6a23c;
+  color: var(--warning);
 }
 
 /* 内容安全提示条：说明这条回答被系统处理过，避免用户以为是系统坏了 */
@@ -1024,47 +1052,77 @@ async function scrollBottom(smooth = false) {
   margin-bottom: 8px;
   padding: 4px 10px;
   font-size: 12.5px;
-  color: #c0392b;
-  background: #fdecea;
-  border: 1px solid #f3c8c1;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
   border-radius: 6px;
 }
 
 .feedback {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   align-self: flex-end;
-  margin-top: 4px;
+  margin-top: 6px;
+  /* 默认半透明，悬停到气泡上时才明显 —— 避免每条回答下面都挂一排图标干扰阅读 */
+  opacity: 0.45;
+  transition: opacity var(--transition-fast);
+}
+.msg-row:hover .feedback {
+  opacity: 1;
 }
 .fb {
-  color: #c0c4cc;
-  font-size: 16px;
+  color: var(--text-4);
+  font-size: 15px;
   cursor: pointer;
-  padding: 4px;
+  padding: 5px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
 }
-.fb.liked { color: #409eff; }
-.fb.disliked { color: #f56c6c; }
+.fb:hover {
+  background: var(--bg-hover);
+  color: var(--brand-500);
+}
+.fb.liked { color: var(--brand-500); }
+.fb.disliked { color: var(--danger); }
 
-/* ---- 输入区 ---- */
+/* ---- 输入区 ----
+   原来就是一个普通 textarea 贴底。现在做成"浮动输入卡"：
+   白底 + 圆角 + 阴影 + 聚焦时主色描边，视觉上更集中。 */
 .input-bar {
-  border-top: 1px solid #e4e7ed;
-  padding: 12px 20px;
-  background: #fff;
+  border-top: 1px solid var(--border-2);
+  padding: 14px 20px 16px;
+  background: var(--bg-card);
 }
 .input-wrap {
   max-width: 860px;
   margin: 0 auto;
 }
+.input-wrap :deep(.el-textarea__inner) {
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  padding: 12px 14px;
+  font-size: var(--font-base);
+  line-height: 1.65;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.input-wrap :deep(.el-textarea__inner:hover) {
+  border-color: var(--brand-300);
+}
+.input-wrap :deep(.el-textarea__inner:focus) {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px var(--brand-50);
+}
 .input-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 .input-tip {
-  color: #c0c4cc;
-  font-size: 12px;
+  color: var(--text-4);
+  font-size: var(--font-xs);
 }
 
 .cite-detail .cite-meta {
@@ -1073,15 +1131,15 @@ async function scrollBottom(smooth = false) {
   margin-bottom: 12px;
 }
 .cite-score {
-  color: #409eff;
+  color: var(--brand-500);
   font-size: 13px;
 }
 .cite-page {
-  color: #909399;
+  color: var(--text-4);
   font-size: 13px;
 }
 .cite-text {
-  background: #f5f7fa;
+  background: var(--bg-hover);
   border-radius: 8px;
   padding: 14px;
   font-size: 13px;

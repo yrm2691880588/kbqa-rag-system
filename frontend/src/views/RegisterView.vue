@@ -229,7 +229,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #f0f9eb 0%, #f5f7fa 100%);
+  background: linear-gradient(135deg, var(--success-bg) 0%, var(--bg-hover) 100%);
 }
 
 .auth-card {
@@ -247,12 +247,12 @@ onMounted(() => {
 .title h2 {
   margin: 0;
   font-size: 20px;
-  color: #303133;
+  color: var(--text-1);
 }
 
 .subtitle {
   text-align: center;
-  color: #909399;
+  color: var(--text-4);
   font-size: 13px;
   margin: 8px 0 18px;
 }
@@ -265,7 +265,7 @@ onMounted(() => {
 /* 邀请码下方的说明文字 */
 .field-hint {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-4);
   line-height: 1.5;
   margin-top: 4px;
 }
@@ -274,11 +274,11 @@ onMounted(() => {
   margin-top: 18px;
   text-align: center;
   font-size: 14px;
-  color: #909399;
+  color: var(--text-4);
 }
 
 .footer a {
-  color: #409eff;
+  color: var(--brand-500);
   text-decoration: none;
 }
 
@@ -316,7 +316,7 @@ onMounted(() => {
 .captcha-img {
   width: 108px;
   height: 38px;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--border-1);
   border-radius: 4px;
   overflow: hidden;
   cursor: pointer;
@@ -335,6 +335,6 @@ onMounted(() => {
 
 .captcha-loading {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-4);
 }
 </style>

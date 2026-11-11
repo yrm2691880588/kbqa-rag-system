@@ -1,4 +1,15 @@
-/* 全局基础样式 */
+/**
+ * 全局基础样式 + 通用组件类。
+ *
+ * 引入顺序很重要：theme.css 必须先加载，
+ * 否则下面的 var(--brand-500) 找不到定义会退回默认值。
+ */
+
+@import './styles/theme.css';
+
+/* ============================================================
+ * 基础重置
+ * ============================================================ */
 * {
   box-sizing: border-box;
 }
@@ -9,9 +20,210 @@ body,
   height: 100%;
   margin: 0;
   padding: 0;
-  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+  font-family:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  /* 字间距略微收紧，中文界面会显得更精致 */
+  letter-spacing: -0.01em;
+  color: var(--text-2);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  background-color: #f5f7fa;
+  background-color: var(--bg-page);
+  font-size: var(--font-base);
+  line-height: 1.6;
 }
+
+/* 滚动条美化：默认滚动条太抢眼 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4d7dd;
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b8bcc4;
+}
+
+/* ============================================================
+ * 通用页面结构
+ * ============================================================
+ * 各管理页原本各写一套 .page / .title / .page-head，值还不一样。
+ * 这里统一，页面里直接复用类名即可。
+ */
+.page {
+  padding: var(--space-5) var(--space-6);
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.page-title {
+  margin: 0;
+  font-size: var(--font-xl);
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: -0.02em;
+}
+
+.page-subtitle {
+  margin: 4px 0 0;
+  font-size: var(--font-sm);
+  color: var(--text-4);
+  font-weight: 400;
+}
+
+/* ============================================================
+ * 通用卡片
+ * ============================================================
+ * 关键改动：从「白底 + 1px 灰边」改成「白底 + 极淡阴影」。
+ * 边框会让人联想到表格，阴影才有"浮起来"的层次感。
+ */
+.app-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-2);
+  transition: box-shadow var(--transition-base);
+}
+
+.app-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* 让 Element Plus 的 el-card 也统一风格 */
+.el-card {
+  border-radius: var(--radius-md) !important;
+  border-color: var(--border-2) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.el-card__header {
+  border-bottom-color: var(--border-2) !important;
+  font-weight: 600;
+}
+
+/* ============================================================
+ * 统计卡片（仪表盘、反馈页共用）
+ * ============================================================ */
+.stat-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-2);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5);
+  transition: box-shadow var(--transition-base), transform var(--transition-fast);
+}
+
+.stat-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.stat-num {
+  font-size: var(--font-2xl);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  margin-top: var(--space-2);
+  font-size: var(--font-sm);
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.stat-sub {
+  margin-top: var(--space-1);
+  font-size: var(--font-xs);
+  color: var(--text-4);
+}
+
+/* 语义色（配合 stat-num 使用） */
+.is-success { color: var(--success) !important; }
+.is-warning { color: var(--warning) !important; }
+.is-danger  { color: var(--danger) !important; }
+.is-muted   { color: var(--text-5) !important; }
+
+/* ============================================================
+ * 按钮微调
+ * ============================================================ */
+.el-button {
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.el-button--primary {
+  /* 主按钮加一点阴影，让它"浮"出来 */
+  box-shadow: 0 1px 3px rgba(79, 110, 247, 0.3);
+}
+
+.el-button--primary:hover {
+  box-shadow: 0 2px 6px rgba(79, 110, 247, 0.4);
+}
+
+/* 输入框圆角与聚焦效果 */
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: var(--radius-sm) !important;
+  transition: box-shadow var(--transition-fast);
+}
+
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--brand-500) inset !important;
+}
+
+/* 表格：去掉生硬的边框，行悬停加淡底 */
+.el-table th.el-table__cell {
+  background: #fafbfc !important;
+  color: var(--text-3) !important;
+  font-weight: 600 !important;
+  font-size: var(--font-sm);
+}
+
+.el-table__row:hover > td.el-table__cell {
+  background: var(--bg-hover) !important;
+}
+
+/* 标签圆角 */
+.el-tag {
+  border-radius: var(--radius-sm);
+}
+
+/* 空状态：原来默认图很大，在小区域里显得突兀 */
+.el-empty__image {
+  max-width: 120px;
+}
+
+/* ============================================================
+ * 工具类（少量，够用即可）
+ * ============================================================ */
+.flex { display: flex; }
+.flex-center { display: flex; align-items: center; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.gap-1 { gap: var(--space-1); }
+.gap-2 { gap: var(--space-2); }
+.gap-3 { gap: var(--space-3); }
+.gap-4 { gap: var(--space-4); }
+.text-muted { color: var(--text-4); }
+.text-secondary { color: var(--text-3); }

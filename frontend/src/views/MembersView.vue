@@ -252,29 +252,29 @@ onMounted(load)
   margin: 0;
 }
 .no-action {
-  color: #c0c4cc;
+  color: var(--text-5);
 }
 .pwd-box {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border: 1px dashed #409eff;
+  border: 1px dashed var(--brand-500);
   border-radius: 8px;
-  background: #ecf5ff;
+  background: var(--brand-50);
 }
 .pwd-text {
   flex: 1;
   font-family: Consolas, Monaco, monospace;
   font-size: 18px;
   font-weight: 600;
-  color: #303133;
+  color: var(--text-1);
   word-break: break-all;
   user-select: all;
 }
 .pwd-user {
   margin-top: 10px;
   font-size: 13px;
-  color: #909399;
+  color: var(--text-4);
 }
 </style>

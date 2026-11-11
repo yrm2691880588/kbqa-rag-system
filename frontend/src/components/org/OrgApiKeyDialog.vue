@@ -245,15 +245,15 @@ async function copyNewKey() {
 }
 
 .key-new {
-  background: #f0f9eb;
-  border: 1px solid #e1f3d8;
+  background: var(--success-bg);
+  border: 1px solid var(--success-bg);
   border-radius: 6px;
   padding: 12px 16px;
   margin-bottom: 16px;
 }
 
 .key-new-head {
-  color: #67c23a;
+  color: var(--success);
   font-weight: 600;
   margin-bottom: 8px;
 }
@@ -278,7 +278,7 @@ async function copyNewKey() {
 }
 
 .key-example {
-  color: #909399;
+  color: var(--text-4);
   font-size: 12px;
 }
 
@@ -289,6 +289,6 @@ async function copyNewKey() {
 }
 
 .muted {
-  color: #c0c4cc;
+  color: var(--text-5);
 }
 </style>

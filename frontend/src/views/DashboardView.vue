@@ -202,97 +202,125 @@ onMounted(reload)
 
 <style scoped>
 .page {
-  padding: 4px;
+  padding: var(--space-5) var(--space-6);
+  max-width: 1500px;
 }
 
 .page-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
 .title {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--font-xl);
   font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: -0.02em;
 }
 
 .issues {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-md);
 }
 
 .issues-tip {
-  color: #909399;
-  margin-left: 4px;
+  color: var(--text-4);
+  margin-left: var(--space-1);
 }
 
+/* ---------- 指标卡 ---------- */
 .cards {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  margin-bottom: 16px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .card {
-  background: #fff;
-  border: 1px solid #ebeef5;
-  border-radius: 10px;
-  padding: 18px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5);
+  transition: box-shadow var(--transition-base), transform var(--transition-fast);
+  position: relative;
+  overflow: hidden;
 }
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+/* 顶部一条彩色标识条：让四个卡片不用读文字就能区分 */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--brand-500);
+  opacity: 0.9;
+}
+.card:nth-child(2)::before { background: var(--success); }
+.card:nth-child(3)::before { background: var(--warning); }
+.card:nth-child(4)::before { background: var(--brand-300); }
 
 .card-num {
-  font-size: 30px;
+  font-size: var(--font-2xl);
   font-weight: 600;
-  color: #303133;
-  line-height: 1.1;
+  color: var(--text-1);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
-.card-num.good {
-  color: #67c23a;
-}
-.card-num.warn {
-  color: #e6a23c;
-}
-.card-num.bad {
-  color: #f56c6c;
-}
-.card-num.muted {
-  color: #c0c4cc;
-}
+.card-num.good { color: var(--success); }
+.card-num.warn { color: var(--warning); }
+.card-num.bad { color: var(--danger); }
+.card-num.muted { color: var(--text-5); }
 
 .card-label {
-  margin-top: 6px;
-  font-size: 13px;
-  color: #606266;
+  margin-top: var(--space-2);
+  font-size: var(--font-sm);
+  color: var(--text-3);
   font-weight: 500;
 }
 
 .card-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #a8abb2;
+  margin-top: var(--space-1);
+  font-size: var(--font-xs);
+  color: var(--text-4);
 }
 
+/* ---------- 第二排 ---------- */
 .row2 {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
-  gap: 14px;
-  margin-bottom: 16px;
+  grid-template-columns: 1.35fr 1fr;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .card-title {
   font-weight: 600;
-  color: #303133;
-  margin-bottom: 16px;
+  color: var(--text-1);
+  margin-bottom: var(--space-4);
+  font-size: var(--font-lg);
 }
 
+/* ---------- 趋势图 ---------- */
 .chart {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
-  height: 180px;
-  padding: 0 4px;
+  gap: var(--space-2);
+  height: 190px;
+  padding: 0 var(--space-1);
 }
 
 .bar-wrap {
@@ -305,39 +333,46 @@ onMounted(reload)
 }
 
 .bar-value {
-  font-size: 11px;
-  color: #909399;
-  height: 16px;
+  font-size: var(--font-xs);
+  color: var(--text-4);
+  height: 18px;
+  font-variant-numeric: tabular-nums;
 }
 
 .bar {
-  width: 60%;
-  background: linear-gradient(180deg, #79bbff, #409eff);
-  border-radius: 4px 4px 0 0;
-  transition: height 0.3s;
+  width: 62%;
+  /* 有数据的柱子用品牌渐变，没数据的（高度 2px）也能看出是"这天为 0" */
+  background: linear-gradient(180deg, var(--brand-300), var(--brand-500));
+  border-radius: var(--radius-sm) var(--radius-sm) 2px 2px;
+  transition: height var(--transition-base);
   min-height: 2px;
 }
 
+.bar-wrap:hover .bar {
+  background: linear-gradient(180deg, var(--brand-400), var(--brand-600));
+}
+
 .bar-label {
-  margin-top: 6px;
-  font-size: 11px;
-  color: #a8abb2;
+  margin-top: var(--space-2);
+  font-size: var(--font-xs);
+  color: var(--text-4);
 }
 
 .chart-empty {
-  color: #a8abb2;
-  font-size: 13px;
-  padding: 20px 0;
+  color: var(--text-4);
+  font-size: var(--font-sm);
+  padding: var(--space-5) 0;
   text-align: center;
 }
 
+/* ---------- 最近活动 ---------- */
 .recent-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 0;
-  border-bottom: 1px dashed #f0f2f5;
-  font-size: 13px;
+  gap: var(--space-2);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-2);
+  font-size: var(--font-sm);
 }
 
 .recent-item:last-child {
@@ -346,31 +381,52 @@ onMounted(reload)
 
 .recent-q {
   flex: 1;
-  color: #606266;
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .recent-user {
-  color: #a8abb2;
-  font-size: 12px;
+  color: var(--text-4);
+  font-size: var(--font-xs);
+}
+
+/* ---------- 资源概况 ---------- */
+.resources :deep(.el-card__body) {
+  padding: var(--space-5);
 }
 
 .res-grid {
   display: flex;
-  gap: 48px;
+  gap: var(--space-8);
+}
+
+.res-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
 }
 
 .res-num {
-  font-size: 24px;
+  font-size: var(--font-xl);
   font-weight: 600;
-  color: #303133;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
 }
 
 .res-label {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #909399;
+  font-size: var(--font-sm);
+  color: var(--text-4);
+}
+
+/* ---------- 窄屏：卡片两列 ---------- */
+@media (max-width: 1100px) {
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .row2 {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

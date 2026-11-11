@@ -77,7 +77,7 @@
           </div>
         </template>
 
-        <el-empty v-if="!currentKb" description="选择左侧知识库后，在此上传和管理文档" />
+        <el-empty v-if="!currentKb" description="选择左侧知识库后，在此上传和管理文档" :image-size="90" />
         <el-table v-else :data="docs" v-loading="loadingDocs" size="default">
           <el-table-column label="文件名" min-width="220" show-overflow-tooltip>
             <template #default="{ row }">
@@ -486,7 +486,7 @@ onBeforeUnmount(stopPoll)
   font-weight: 600;
 }
 .warn-icon {
-  color: #e6a23c;
+  color: var(--warning);
   cursor: help;
 }
 
@@ -520,10 +520,10 @@ onBeforeUnmount(stopPoll)
   margin-bottom: 4px;
 }
 .kb-item:hover {
-  background: #f5f7fa;
+  background: var(--bg-hover);
 }
 .kb-item.active {
-  background: #ecf5ff;
+  background: var(--brand-50);
 }
 .kb-item-top {
   display: flex;
@@ -540,15 +540,15 @@ onBeforeUnmount(stopPoll)
 }
 .more-btn {
   cursor: pointer;
-  color: #909399;
+  color: var(--text-4);
   flex-shrink: 0;
 }
 .more-btn:hover {
-  color: #409eff;
+  color: var(--brand-500);
 }
 .kb-meta {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-4);
   margin-top: 4px;
 }
 .doc-head {
@@ -568,7 +568,7 @@ onBeforeUnmount(stopPoll)
   font-weight: 600;
 }
 .doc-desc {
-  color: #909399;
+  color: var(--text-4);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -576,7 +576,7 @@ onBeforeUnmount(stopPoll)
   max-width: 320px;
 }
 .doc-placeholder {
-  color: #909399;
+  color: var(--text-4);
   font-size: 13px;
 }
 .doc-actions {
@@ -587,7 +587,7 @@ onBeforeUnmount(stopPoll)
 }
 .disabled-tip {
   font-size: 12px;
-  color: #e6a23c;
+  color: var(--warning);
 }
 .file-cell {
   display: inline-flex;
@@ -595,7 +595,7 @@ onBeforeUnmount(stopPoll)
   gap: 6px;
 }
 .file-icon {
-  color: #409eff;
+  color: var(--brand-500);
 }
 .status-cell {
   display: flex;
@@ -603,23 +603,23 @@ onBeforeUnmount(stopPoll)
 }
 .progress-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-4);
   margin-top: 2px;
 }
 .muted {
-  color: #c0c4cc;
+  color: var(--text-5);
 }
 .chunk-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-4);
   margin-bottom: 10px;
 }
 .chunk-card {
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--border-2);
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 10px;
-  background: #fafafa;
+  background: var(--bg-hover);
 }
 .chunk-head {
   display: flex;
@@ -629,7 +629,7 @@ onBeforeUnmount(stopPoll)
 .chunk-text {
   font-size: 13px;
   line-height: 1.7;
-  color: #303133;
+  color: var(--text-1);
   white-space: pre-wrap;
   word-break: break-all;
 }

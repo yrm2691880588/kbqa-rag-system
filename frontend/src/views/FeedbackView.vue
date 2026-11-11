@@ -301,27 +301,27 @@ onMounted(reload)
   background: #fff;
   border-radius: 8px;
   padding: 16px 20px;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--border-2);
 }
 
 .stat-num {
   font-size: 26px;
   font-weight: 600;
-  color: #303133;
+  color: var(--text-1);
   line-height: 1.2;
 }
 
 .stat-card.ok .stat-num {
-  color: #67c23a;
+  color: var(--success);
 }
 
 .stat-card.bad .stat-num {
-  color: #f56c6c;
+  color: var(--danger);
 }
 
 .stat-label {
   margin-top: 4px;
-  color: #909399;
+  color: var(--text-4);
   font-size: 13px;
 }
 
@@ -332,7 +332,7 @@ onMounted(reload)
 .reasons-title {
   font-weight: 600;
   margin-bottom: 12px;
-  color: #303133;
+  color: var(--text-1);
 }
 
 .reasons {
@@ -344,35 +344,39 @@ onMounted(reload)
 .reason-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 13px;
+  gap: var(--space-3);
+  font-size: var(--font-sm);
 }
 
 .reason-label {
-  width: 160px;
-  color: #606266;
+  width: 150px;
+  color: var(--text-3);
   flex-shrink: 0;
 }
 
+/* 限最大宽度：原来用 flex:1 会拉满整行，
+   只有一项数据时拖出一条贯通的粗红线，看起来像出错告警而不是统计图。 */
 .reason-bar-wrap {
   flex: 1;
-  background: #f5f7fa;
-  border-radius: 4px;
-  height: 16px;
+  max-width: 420px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-pill);
+  height: 10px;
   overflow: hidden;
 }
 
 .reason-bar {
   height: 100%;
-  background: #f56c6c;
-  border-radius: 4px;
-  transition: width 0.3s;
+  min-width: 4px;
+  background: linear-gradient(90deg, var(--warning), var(--danger));
+  border-radius: var(--radius-pill);
+  transition: width var(--transition-base);
 }
 
 .reason-count {
   width: 40px;
   text-align: right;
-  color: #909399;
+  color: var(--text-4);
 }
 
 .tip {
@@ -384,7 +388,7 @@ onMounted(reload)
 }
 
 .muted {
-  color: #c0c4cc;
+  color: var(--text-5);
 }
 
 .detail {
@@ -393,7 +397,7 @@ onMounted(reload)
 
 .detail-label {
   font-weight: 600;
-  color: #303133;
+  color: var(--text-1);
   margin: 16px 0 8px;
 }
 
@@ -402,10 +406,10 @@ onMounted(reload)
 }
 
 .detail-box {
-  background: #f5f7fa;
+  background: var(--bg-hover);
   border-radius: 6px;
   padding: 12px 14px;
-  color: #606266;
+  color: var(--text-3);
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
@@ -418,17 +422,17 @@ onMounted(reload)
 
 .ml {
   margin-left: 10px;
-  color: #606266;
+  color: var(--text-3);
 }
 
 .note {
   margin-top: 8px;
-  color: #e6a23c;
+  color: var(--warning);
 }
 
 .cite-box {
-  background: #fafafa;
-  border: 1px solid #ebeef5;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-2);
   border-radius: 6px;
   padding: 10px 12px;
   margin-bottom: 8px;
@@ -436,13 +440,13 @@ onMounted(reload)
 
 .cite-head {
   font-weight: 500;
-  color: #409eff;
+  color: var(--brand-500);
   font-size: 13px;
   margin-bottom: 6px;
 }
 
 .cite-text {
-  color: #909399;
+  color: var(--text-4);
   font-size: 12px;
   line-height: 1.6;
   max-height: 100px;
@@ -450,7 +454,7 @@ onMounted(reload)
 }
 
 .tip-box {
-  background: #f0f9eb;
-  color: #529b2e;
+  background: var(--success-bg);
+  color: var(--success);
 }
 </style>

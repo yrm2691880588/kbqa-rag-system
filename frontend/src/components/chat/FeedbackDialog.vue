@@ -138,24 +138,24 @@ function onClosed() {
 
 .reason-item {
   padding: 9px 12px;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--border-1);
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  color: #606266;
+  color: var(--text-3);
   transition: all 0.15s;
   user-select: none;
 }
 
 .reason-item:hover {
-  border-color: #409eff;
-  color: #409eff;
+  border-color: var(--brand-500);
+  color: var(--brand-500);
 }
 
 .reason-item.active {
-  border-color: #409eff;
-  background: #ecf5ff;
-  color: #409eff;
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+  color: var(--brand-500);
   font-weight: 500;
 }
 </style>

@@ -204,26 +204,113 @@ async function copyInvite() {
   height: 100vh;
 }
 
+/* 侧边栏：深色。
+   为什么改成深色：
+     全站原来只有灰白 + 一种蓝，视觉上没有"分区感"。
+     深色侧边栏与浅色内容区形成明确对比，
+     这是当前主流 SaaS 产品（飞书/Notion/Linear）的通用做法。 */
 .aside {
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  border-right: 1px solid #e4e7ed;
+  background: var(--aside-bg);
+  border-right: none;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.06);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 18px 20px;
-  font-size: 18px;
+  gap: 10px;
+  padding: 20px 20px 18px;
+  font-size: var(--font-lg);
   font-weight: 600;
-  color: #303133;
+  color: var(--aside-text-active);
+  letter-spacing: -0.01em;
+}
+
+/* 品牌图标加一点主色底，让 logo 有存在感 */
+.brand .el-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--brand-400), var(--brand-600));
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(79, 110, 247, 0.35);
 }
 
 .menu {
   border-right: none;
   flex: 1;
+  background: transparent;
+  padding: 0 10px;
+}
+
+/* ---- 菜单项（深色主题）---- */
+.aside :deep(.el-menu-item) {
+  height: 42px;
+  line-height: 42px;
+  margin-bottom: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--aside-text);
+  font-size: var(--font-base);
+  transition: all var(--transition-fast);
+}
+
+.aside :deep(.el-menu-item:hover) {
+  background: var(--aside-bg-hover);
+  color: var(--aside-text-active);
+}
+
+/* 选中态：主色块 + 白字，一眼能看出当前在哪 */
+.aside :deep(.el-menu-item.is-active) {
+  background: var(--aside-active-bg);
+  color: var(--aside-text-active);
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(61, 87, 219, 0.4);
+}
+
+/* ---- 底部用户区（深色底）----
+   原来这块是浅色文字配白底，侧边栏改深色后完全看不清了，必须同步改。 */
+.user-area {
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: auto;
+}
+
+.user-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.user-trigger:hover {
+  background: var(--aside-bg-hover);
+}
+
+.user-area :deep(.el-avatar) {
+  background: linear-gradient(135deg, var(--brand-400), var(--brand-600));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.user-area .user-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-sm);
+  color: var(--aside-text-active);
+  font-weight: 500;
 }
 
 /* 当前组织条：夹在品牌名和菜单之间，让人一眼知道自己"在哪家公司的空间里" */
@@ -231,19 +318,21 @@ async function copyInvite() {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 12px 8px;
-  padding: 7px 10px;
-  border-radius: 6px;
-  background: #ecf5ff;
-  color: #409eff;
-  font-size: 12px;
+  margin: 0 14px 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--aside-text);
+  font-size: var(--font-xs);
   line-height: 1;
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-/* 没有组织归属：换成醒目的橙色提醒（这种账号什么都看不到，必须让人知道） */
+/* 没有组织归属：换成醒目的警告色（这种账号什么都看不到，必须让人知道） */
 .org-banner.warn {
-  background: #fdf6ec;
-  color: #e6a23c;
+  background: rgba(247, 144, 9, 0.14);
+  border-color: rgba(247, 144, 9, 0.3);
+  color: #f7b955;
 }
 
 .org-banner .org-name {
@@ -263,9 +352,9 @@ async function copyInvite() {
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border: 1px dashed #409eff;
+  border: 1px dashed var(--brand-500);
   border-radius: 8px;
-  background: #ecf5ff;
+  background: var(--brand-50);
 }
 
 .invite-code {
@@ -273,14 +362,14 @@ async function copyInvite() {
   font-family: Consolas, Monaco, monospace;
   font-size: 18px;
   font-weight: 600;
-  color: #303133;
+  color: var(--text-1);
   word-break: break-all;
   user-select: all;
 }
 
 .user-area {
   padding: 12px 16px;
-  border-top: 1px solid #e4e7ed;
+  border-top: 1px solid var(--border-1);
 }
 
 .user-trigger {
@@ -296,7 +385,7 @@ async function copyInvite() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #303133;
+  color: var(--text-1);
 }
 
 .phone-tag {
@@ -305,7 +394,7 @@ async function copyInvite() {
 
 .main {
   padding: 0;
-  background: #f5f7fa;
+  background: var(--bg-hover);
   overflow: hidden;
   display: flex;
   flex-direction: column;

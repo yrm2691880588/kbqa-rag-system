@@ -196,7 +196,7 @@ async function save() {
 }
 
 .usage-box {
-  background: #f5f7fa;
+  background: var(--bg-hover);
   border-radius: 6px;
   padding: 12px 16px;
   margin-bottom: 16px;
@@ -209,17 +209,17 @@ async function save() {
 }
 
 .usage-label {
-  color: #606266;
+  color: var(--text-3);
 }
 
 .usage-val {
-  color: #303133;
+  color: var(--text-1);
   font-weight: 500;
 }
 
 .unit {
   margin-left: 8px;
-  color: #909399;
+  color: var(--text-4);
   font-size: 12px;
 }
 </style>
