@@ -97,7 +97,9 @@
 │       ├── api/              # 接口封装（含 SSE 流式）
 │       ├── stores/           # Pinia 状态（登录态等）
 │       └── router/           # 路由守卫
-├── scripts/                  # 一键启动脚本(.bat)
+├── 启动.bat                  # ⭐ 一键启动（双击即用）
+├── 停止.bat                  # ⭐ 一键停止（双击即用，数据保留）
+├── scripts/                  # 分步启动脚本（需要单独控制某一步时用）
 │   ├── start-docker.bat      # ① 启动数据库容器
 │   ├── start-backend.bat     # ② 启动后端  (127.0.0.1:8000)
 │   ├── start-frontend.bat    # ③ 启动前端  (127.0.0.1:5173)
@@ -108,11 +110,38 @@
 
 ---
 
-## 🚀 快速启动（本地开发）
+## 🚀 快速启动
 
-> 共 4 步，按顺序执行即可。启动脚本已备好：`scripts/` 目录。
+### ⭐ 最省事：双击两个脚本（推荐）
 
-### 0️⃣ 环境要求
+项目根目录有两个一键脚本，**不用记命令、不用找脚本在哪**：
+
+| 脚本 | 作用 |
+|---|---|
+| **[启动.bat](启动.bat)** | 自动完成：检查环境 → 起数据库容器并等健康 → 起后端并等就绪 → 起前端 → 打开浏览器 |
+| **[停止.bat](停止.bat)** | 一键停掉前后端进程 + 数据库容器（**数据保留**，下次启动还在） |
+
+**第一次使用**，仍需先做两步准备：
+
+1. 配置密钥：把 `backend/.env.example` 复制成 `backend/.env`，
+   填入你自己的 `EMBEDDING_API_KEY`（阿里云百炼）与 `LLM_API_KEY`（DeepSeek）
+2. 装依赖：`cd frontend` 然后 `npm install`
+
+之后每天只要**双击「启动.bat」**即可。
+
+脚本的几个贴心设计：
+
+- **已运行的部分自动跳过**，不会重复开窗口
+- **等真正就绪才开浏览器**，不会出现白屏
+- **停止时按 PID 精确识别**，绝不按进程名批量杀，不会误伤你机器上别的项目
+
+---
+
+### 手动启动（4 步）
+
+> 需要自己控制每一步时用这个。脚本在 `scripts/` 目录。
+
+#### 0. 环境要求
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
@@ -120,7 +149,7 @@
 | Python | 3.11+（实测 3.12） | 后端 |
 | Node.js | 18+ | 前端构建 |
 
-### 1️⃣ 配置密钥（只需一次）
+#### 1. 配置密钥（只需一次）
 
 ```bash
 cd backend
@@ -131,37 +160,37 @@ copy .env.example .env        # Windows
 # 申请地址见 .env.example 内注释
 ```
 
-### 2️⃣ 启动数据库（Docker）
+#### 2. 启动数据库（Docker）
 
 ```bash
 docker compose up -d
-# 或双击 scripts\start-docker.bat
+# 或双击 scripts/start-docker.bat
 ```
 
 会启动两个容器：`kbqa-postgres`（5432）与 `kbqa-qdrant`（6333/6334）。
 
-### 3️⃣ 启动后端
+#### 3. 启动后端
 
 ```bash
 # 建议先建虚拟环境并装依赖：
 python -m venv .venv
-.venv\Scripts\pip install -r backend\requirements.txt
+.venv/Scripts/pip install -r backend/requirements.txt
 
-# 启动（或双击 scripts\start-backend.bat）
-.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+# 启动（或双击 scripts/start-backend.bat）
+.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 后端就绪后：
 - API 文档（Swagger）：http://127.0.0.1:8000/docs
 - 健康检查：http://127.0.0.1:8000/api/v1/health
 
-### 4️⃣ 启动前端
+#### 4. 启动前端
 
 ```bash
 cd frontend
 npm install
 npm run dev
-# 或双击 scripts\start-frontend.bat
+# 或双击 scripts/start-frontend.bat
 ```
 
 浏览器打开 **http://127.0.0.1:5173** 即可使用。
