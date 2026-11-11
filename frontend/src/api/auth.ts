@@ -111,7 +111,12 @@ export function resetPassword(phone: string, code: string, newPassword: string) 
  * （脚本/第三方仍可通过请求体传 refresh_token，后端两种都支持。）
  */
 export function refresh() {
-  return http.post<TokenPair>('/auth/refresh', {}).then((r) => r.data)
+  // 带上 _isRefreshCall 标记：让响应拦截器知道"这是刷新请求本身"，
+  // 它失败时（比如刷新令牌也过期了）绝不能再触发一次刷新 —— 否则递归死循环，
+  // 表现为登录按钮一直转圈。
+  return http
+    .post<TokenPair>('/auth/refresh', {}, { _isRefreshCall: true } as never)
+    .then((r) => r.data)
 }
 
 /**
