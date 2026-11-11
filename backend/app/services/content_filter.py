@@ -56,6 +56,33 @@ def _fullwidth_to_halfwidth(ch: str) -> str:
 # 跳过它们是为了让"赌  博"、"赌-博"、"赌*博"这类插入干扰的写法也能被认出来。
 _SKIP_CHARS = set(" \t\r\n\u3000") | set("-_*./\\|+~^·.,;:!?()[]{}<>\"'`@#$%&=，。；：！？（）【】《》、…—‘’“”")
 
+# 除了人工列举的符号，还要按 Unicode 类别跳过"不承载文字语义"的字符。
+# 为什么不能只靠 _SKIP_CHARS 列举：
+#   Unicode 里的 Cf（格式字符）有上百个、emoji 有几千个，
+#   人工列举永远补不全。实测「赌\u200b博」「赌\ufeff博」「加😀qq」
+#   都能绕过过滤 —— 因为零宽空格/BOM/emoji 不在那份列举里。
+# 跳过的类别：
+#   Cf  格式字符（零宽空格、BOM、零宽连接符、软连字符…）
+#   Mn  非占位组合记号（声调、变音符号）
+#   Me  包围型组合记号
+#   So  其他符号（绝大多数 emoji 落在这里）
+#   Sk  修饰符号
+_SKIP_CATEGORIES = frozenset({"Cf", "Mn", "Me", "So", "Sk"})
+
+# 还需要显式处理"控制字符"（Cc），它们同样不该参与比对
+_SKIP_CATEGORIES |= {"Cc", "Cs", "Co", "Cn"}
+
+
+def _should_skip(ch: str) -> bool:
+    """该字符是否应在比对时跳过（不承载文字语义的干扰字符）。"""
+    if ch in _SKIP_CHARS:
+        return True
+    if ch.isspace():
+        return True
+    import unicodedata
+
+    return unicodedata.category(ch) in _SKIP_CATEGORIES
+
 
 # 常见繁体字 → 简体字（只收"常被用来绕过审核"的高频字，不是完整繁简表）。
 # 为什么需要：词库存的是简体（如"赌博"），但用户写"賭博"时字符并不相同，
@@ -97,8 +124,10 @@ def _build_scan_view(text: str) -> tuple[str, list[int]]:
     positions: list[int] = []
     for idx, raw in enumerate(text):
         ch = _fullwidth_to_halfwidth(raw)
-        if ch in _SKIP_CHARS:
-            continue            # 干扰字符不参与比对
+        # 干扰字符不参与比对：既包括人工列举的标点/空白，
+        # 也包括按 Unicode 类别识别的零宽字符、emoji、控制符等。
+        if _should_skip(ch):
+            continue
         ch = _to_simplified(ch)   # 繁体归一化成简体，避免「賭博」这类写法绕过
         chars.append(ch.lower())
         positions.append(idx)
@@ -141,6 +170,68 @@ def _wordlist_path() -> Path:
     return _WORDLIST_PATH
 
 
+# 分类标题的规范写法（按优先级识别）：
+#   ① "# 分类：广告导流"            —— 显式带"分类"二字
+#   ② "# ===== 广告与导流 ====="    —— 被分隔符包裹
+#   ③ "# 广告导流"                  —— 简写（短、不含说明性文字）
+_CAT_PREFIX = re.compile(r"^分类\s*[：:]\s*(.+)$")
+_CAT_WRAPPED = re.compile(r"^[=\-─—=_]{2,}\s*(.+?)\s*[=\-─—=_]{2,}$")
+
+# 说明性注释的开头词：出现这些就肯定不是分类名
+_NOTE_HEADS = (
+    "怎么用", "注意", "说明", "生效范围", "大小写", "下面", "请", "例如",
+    "如果", "需要", "本文件", "系统会", "命中", "覆盖",
+)
+
+# 分类名不该太长，也不该带句读
+_CAT_MAX_LEN = 20
+
+
+def _extract_category(comment_line: str) -> str | None:
+    """从一行 # 注释里提取分类名；不是分类标题则返回 None。
+
+    为什么要能区分"分类标题"和"说明文字"：
+        词表里既有 "# ===== 广告与导流 =====" 这样的标题，
+        也有 "# 说明：这类词本身不违法……" 这样的说明。
+        早期把所有 # 行都当分类名，结果命中时把
+        "==================== 违法交易与诈骗 ===================="
+        回显给了用户 —— 既难看又泄露内部结构。
+    """
+    body = comment_line.lstrip("#").strip()
+    if not body:
+        return None
+
+    # ① 显式 "分类：xxx"
+    m = _CAT_PREFIX.match(body)
+    if m:
+        name = m.group(1).strip()
+        return name or None
+
+    # ② "=== xxx ===" 包裹
+    m = _CAT_WRAPPED.match(body)
+    if m:
+        name = m.group(1).strip()
+        if name and not re.fullmatch(r"[=\-─—=_\s]+", name):
+            return name
+        return None
+
+    # ③ 简写 "# 广告"：短、无句读、不像说明
+    if len(body) > _CAT_MAX_LEN:
+        return None
+    if any(body.startswith(h) for h in _NOTE_HEADS):
+        return None
+    # 含句号/感叹号/问号 → 是一句话，不是标题
+    if any(mark in body for mark in "。！？；"):
+        return None
+    # 含冒号但不是"分类："开头 → 多半是"说明：xxx"
+    if "：" in body or ":" in body:
+        return None
+    # 纯符号行（分隔线）
+    if not re.search(r"[^=\-─—=_\s]", body):
+        return None
+    return body
+
+
 def _parse_wordlist(raw_text: str) -> _WordList:
     """解析词表文本。
 
@@ -161,8 +252,13 @@ def _parse_wordlist(raw_text: str) -> _WordList:
         if not s:
             continue
         if s.startswith("#"):
-            # 分类行：# 后面的内容作为分类名
-            name = s.lstrip("#").strip()
+            # 只有「规范写法的分类标题」才算分类名，其余都是说明性注释。
+            #
+            # 为什么要区分：早期把所有 # 行都当分类名，结果是
+            #   "==================== 违法交易与诈骗 ===================="
+            # 和 "说明：这类词本身不违法……" 都成了分类名，
+            # 而命中时会把这个名字回显给提问者 —— 既难看又泄露内部词库结构。
+            name = _extract_category(s)
             if name:
                 current = name
             continue

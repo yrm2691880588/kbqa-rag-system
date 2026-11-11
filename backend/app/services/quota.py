@@ -171,9 +171,33 @@ async def _try_consume_question(
         把"上限判断"塞进 UPDATE 的 WHERE 里，由数据库在行锁内一次性完成
         "读当前值 + 比较 + 加一"，并发请求就会自然排队，只有真正没超的那个成功。
 
-    日/月两个维度任一超额都不算成功。月用量单独查（跨多行汇总），
-    这里把它作为 UPDATE 的额外守卫条件传入。
+    日/月两个维度任一超额都不算成功。
+
+    ⚠️ 月上限为什么不能直接塞进 UPDATE 的 WHERE：
+        月用量是"本月所有用量行之和"（跨多行），单行 UPDATE 的 WHERE
+        表达不了这个汇总条件。所以对月上限改用「先加锁、再判断」：
+        先用 SELECT ... FOR UPDATE 锁住本月的用量行，在锁内算出月累计，
+        不超才继续执行条件 UPDATE。
+        · PostgreSQL：FOR UPDATE 真正生效，并发请求在此排队，不会同时放行
+        · SQLite：FOR UPDATE 被忽略，但 SQLite 是单写者，本身串行
+
+        （早期版本把 m_limit 收进来却没用，导致当天有用量行后月上限完全失效 ——
+          并发下能无限突破月额度。这里补上。）
     """
+    # 1) 月上限：先锁住本月用量行，再判断（防止并发同时通过）
+    if m_limit is not None:
+        locked = (
+            await db.execute(
+                select(UsageDaily.questions)
+                .where(UsageDaily.org_id == org_id, UsageDaily.day >= month_start_local())
+                .with_for_update()
+            )
+        ).scalars().all()
+        if sum(locked) >= m_limit:
+            await db.rollback()   # 释放锁
+            return False
+
+    # 2) 日上限：条件 UPDATE 一步完成"读+比较+加一"，并发安全
     values = {"questions": UsageDaily.questions + 1}
     conds = [UsageDaily.org_id == org_id, UsageDaily.day == day]
     if d_limit is not None:
@@ -193,11 +217,9 @@ async def _try_consume_question(
     #   ② 已超额 → 返回 False。
     existing = await get_daily_usage(db, org_id, day)
     if existing is None:
-        # 月上限也要在插入前检查一次，避免"新的一天才绕开月限额"
-        if m_limit is not None:
-            month = await get_month_usage(db, org_id)
-            if month["questions"] >= m_limit:
-                return False
+        # 月上限在上面已经检查并扣减过了，这里不再重复查（省一次往返）。
+        # 但 d_limit == 0 这种"一次都不给"仍要在这里挡住：
+        # 条件 UPDATE 命中不到行（0 < 0 不成立），会走到这个分支。
         if d_limit is not None and d_limit <= 0:
             return False
         try:

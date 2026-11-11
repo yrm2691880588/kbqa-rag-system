@@ -166,17 +166,39 @@ async def upload_document(
             "不支持的文件格式，请上传 docx / pdf / xlsx / txt / md / html",
         )
 
-    # 读内容 + 大小限制 + 内容哈希（去重用）
-    content = await file.read()
+    # 大小限制：**边读边判**，不是读完再判。
+    #
+    # 为什么必须这样：
+    #   早期写法是 `content = await file.read()` 先把整个文件读进内存，
+    #   之后才比较大小。传一个 2GB 的文件会先把 2GB 塞进内存 ——
+    #   轻则拖慢整个服务，重则 OOM 把进程打死，上限形同虚设。
+    #   现在按块读，累计超限立刻 413 并停止读取，内存占用封顶在 limit_mb。
+    limit_mb = _max_upload_mb()
+    limit_bytes = limit_mb * 1024 * 1024
+    too_large_msg = (
+        f"文件超过 {limit_mb}MB 上限"
+        + ("（该上限可由后台配置调整）" if limit_mb else "")
+    )
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)   # 每次读 1MB
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit_bytes:
+            # 立即停止，不再继续读；已读的部分随请求结束释放
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, too_large_msg
+            )
+        chunks.append(chunk)
+
+    content = b"".join(chunks)
+    chunks.clear()   # 及时释放分块列表，避免同时持有两份内存
+
     if len(content) == 0:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "文件内容为空")
-    limit_mb = _max_upload_mb()
-    if len(content) > limit_mb * 1024 * 1024:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"文件超过 {limit_mb}MB 上限"
-            + ("（该上限可由后台配置调整）" if limit_mb else ""),
-        )
     file_hash = hashlib.sha256(content).hexdigest()
 
     # 同知识库内查重：内容完全相同的文件
