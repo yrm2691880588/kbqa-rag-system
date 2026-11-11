@@ -32,10 +32,16 @@ http.interceptors.response.use(
     const auth = useAuthStore()
     const original = error.config as (InternalAxiosRequestConfig & { _retried?: boolean }) | undefined
 
+    // 探测型请求：它们的 401 表示"当前未登录"，是**正常状态**，不是令牌过期。
+    // 如果对它们也走续期+跳转逻辑，会在页面刚打开时就把渲染打断（白屏）。
+    // 这类请求交给调用方自己判断（store 的 restoreSession 会 catch 掉）。
+    const url = original?.url || ''
+    const isProbe = url.includes('/users/me')
+
     // 只有"访问令牌过期"(401) 且该请求还没重试过时，才尝试续期。
     // 注意：这里不再判断"本地有没有 refresh_token"——令牌在 Cookie 里，
     // 前端读不到。刷新能否成功完全由后端判断（Cookie 里的刷新令牌是否有效）。
-    if (error.response?.status === 401 && original && !original._retried) {
+    if (error.response?.status === 401 && original && !original._retried && !isProbe) {
       if (refreshing) {
         // 已有请求在刷新：排队等它完成再重放
         return new Promise((resolve, reject) => {
@@ -53,17 +59,22 @@ http.interceptors.response.use(
         return http(original) // 换到新令牌后重试原请求
       }
       auth.clear()
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login' // 刷新也失败 → 回登录页
-      }
+      // 不再用 window.location.href 硬跳转。
+      // 原因：那会打断正在进行的渲染与导航，页面直接变空白。
+      // 现在只清掉本地状态，让 Promise reject 下去；
+      // 该去哪由路由守卫根据 isLoggedIn 判断，跳转更自然。
     }
 
-    // 业务错误信息展示（后端返回的 detail 是中文提示）
-    const detail = (error.response?.data as { detail?: string } | undefined)?.detail
-    if (detail) {
-      ElMessage.error(detail)
-    } else if (error.code === 'ECONNABORTED') {
-      ElMessage.error('请求超时，请稍后重试')
+    // 业务错误信息展示（后端返回的 detail 是中文提示）。
+    // 但探测型请求（isProbe）的 401 不弹窗：它代表"还没登录"，
+    // 是页面初始化的正常状态，弹红框只会让用户以为出错了。
+    if (!isProbe) {
+      const detail = (error.response?.data as { detail?: string } | undefined)?.detail
+      if (detail) {
+        ElMessage.error(detail)
+      } else if (error.code === 'ECONNABORTED') {
+        ElMessage.error('请求超时，请稍后重试')
+      }
     }
     return Promise.reject(error)
   },
