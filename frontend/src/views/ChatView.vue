@@ -76,143 +76,153 @@
       <template v-else>
         <div class="chat-head">
           <div class="chat-title">
-            {{ scopeName }}
+            <span class="title-text">{{ scopeName }}</span>
             <el-tooltip content="点击重命名" placement="bottom">
               <el-button link size="small" class="rename-btn" @click="startRename">
                 <el-icon><EditPen /></el-icon>
               </el-button>
             </el-tooltip>
           </div>
+          <!-- 右侧补充状态信息：
+               原来这条栏只放左侧一个小标题，右边整片空白，显得很单薄。
+               补上「检索范围 + 消息数」，既填满视觉也提供有用信息。 -->
+          <div v-if="currentSession" class="head-meta">
+            <el-tag size="small" effect="plain" class="meta-tag">{{ scopeKbLabel }}</el-tag>
+            <span class="meta-count">{{ displayMessages.length }} 条消息</span>
+          </div>
         </div>
 
         <!-- 消息区 -->
         <div ref="msgListRef" class="msg-list">
-          <div
-            v-for="(m, i) in displayMessages"
-            :key="m.key"
-            class="msg-row"
-            :class="m.role"
-          >
-            <div class="avatar">{{ m.role === 'user' ? '我' : 'AI' }}</div>
-            <div class="bubble">
-              <!-- 思考过程（折叠展示） -->
-              <div v-if="m.thinking && m.thinking.length" class="think-box" @click="toggleThink(m.key)">
-                <span class="think-hint">{{ m.showThink ? '▾ 已展开思考过程' : '▸ 查看思考过程' }}</span>
-                <div v-if="m.showThink" class="think-text">{{ m.thinking }}</div>
-              </div>
+          <!-- 居中阅读栏：限制内容宽度，与输入框对齐 -->
+          <div class="msg-inner">
+            <div
+              v-for="(m, i) in displayMessages"
+              :key="m.key"
+              class="msg-row"
+              :class="m.role"
+            >
+              <div class="avatar">{{ m.role === 'user' ? '我' : 'AI' }}</div>
+              <div class="bubble">
+                <!-- 思考过程（折叠展示） -->
+                <div v-if="m.thinking && m.thinking.length" class="think-box" @click="toggleThink(m.key)">
+                  <span class="think-hint">{{ m.showThink ? '▾ 已展开思考过程' : '▸ 查看思考过程' }}</span>
+                  <div v-if="m.showThink" class="think-text">{{ m.thinking }}</div>
+                </div>
 
-              <!-- 正式回答 / 用户消息 -->
-              <div v-if="m.role === 'user'" class="user-text">{{ m.content }}</div>
-              <div v-else class="answer-wrap">
-                <!-- 流式打字光标 -->
-                <div v-if="m.typing && !m.content && !m.noHit" class="thinking-anim">
-                  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                  <span class="thinking-label">{{ m.thinkingLabel }}</span>
-                </div>
-                <!-- 内容安全提示：这条回答被系统处理过，说清楚"为什么"比闷着不解释好 -->
-                <div v-if="m.blocked" class="blocked-tip">
-                  <el-icon><WarningFilled /></el-icon>
-                  该回答已被内容安全策略处理
-                </div>
-                <!-- 用 v-html 渲染带 [n] 角标的回答 -->
-                <div class="answer" @click="onAnswerClick" v-html="renderAnswer(m.content)" />
-                <!-- 引用条目（回答下方列出来源） -->
-                <div v-if="m.citations && m.citations.length" class="ref-list">
-                  <div
-                    v-for="c in m.citations"
-                    :key="c.index"
-                    class="ref-item"
-                    @click="openCitation(c, m)"
-                  >
-                    <span class="ref-badge">{{ c.index }}</span>
-                    <span class="ref-doc">{{ c.doc_name }}</span>
-                    <span class="ref-score">{{ (c.score * 100).toFixed(0) }}%</span>
+                <!-- 正式回答 / 用户消息 -->
+                <div v-if="m.role === 'user'" class="user-text">{{ m.content }}</div>
+                <div v-else class="answer-wrap">
+                  <!-- 流式打字光标 -->
+                  <div v-if="m.typing && !m.content && !m.noHit" class="thinking-anim">
+                    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                    <span class="thinking-label">{{ m.thinkingLabel }}</span>
                   </div>
+                  <!-- 内容安全提示：这条回答被系统处理过，说清楚"为什么"比闷着不解释好 -->
+                  <div v-if="m.blocked" class="blocked-tip">
+                    <el-icon><WarningFilled /></el-icon>
+                    该回答已被内容安全策略处理
+                  </div>
+                  <!-- 用 v-html 渲染带 [n] 角标的回答 -->
+                  <div class="answer" @click="onAnswerClick" v-html="renderAnswer(m.content)" />
+                  <!-- 引用条目（回答下方列出来源） -->
+                  <div v-if="m.citations && m.citations.length" class="ref-list">
+                    <div
+                      v-for="c in m.citations"
+                      :key="c.index"
+                      class="ref-item"
+                      @click="openCitation(c, m)"
+                    >
+                      <span class="ref-badge">{{ c.index }}</span>
+                      <span class="ref-doc">{{ c.doc_name }}</span>
+                      <span class="ref-score">{{ (c.score * 100).toFixed(0) }}%</span>
+                    </div>
+                  </div>
+                  <div v-if="m.noHit" class="no-hit-tip">{{ m.noHitText }}</div>
                 </div>
-                <div v-if="m.noHit" class="no-hit-tip">{{ m.noHitText }}</div>
+              </div>
+              <!-- 反馈（仅已完成回答） -->
+              <div v-if="m.role === 'assistant' && !m.typing && m.content" class="feedback">
+                <el-tooltip content="回答有帮助" placement="top">
+                  <el-icon class="fb" :class="{ liked: m.feedback === 1 }" @click="setFeedback(m, 1)"><Top /></el-icon>
+                </el-tooltip>
+                <el-tooltip
+                  :content="m.feedback === -1 && m.feedbackReason ? `已反馈：${reasonLabel(m.feedbackReason)}` : '回答不准确'"
+                  placement="top"
+                >
+                  <el-icon class="fb" :class="{ disliked: m.feedback === -1 }" @click="setFeedback(m, -1)"><Bottom /></el-icon>
+                </el-tooltip>
+                <!-- 重新生成：对同一问题再答一次。
+                     只在最后一条回答上显示 —— 用户通常是想"这条不满意，换个答案"，
+                     给所有历史回答都挂按钮反而干扰阅读。 -->
+                <el-tooltip
+                  v-if="m === lastAssistantMessage && !sending"
+                  content="换个答案重新生成"
+                  placement="top"
+                >
+                  <el-icon class="fb" @click="regenerate"><RefreshRight /></el-icon>
+                </el-tooltip>
               </div>
             </div>
-            <!-- 反馈（仅已完成回答） -->
-            <div v-if="m.role === 'assistant' && !m.typing && m.content" class="feedback">
-              <el-tooltip content="回答有帮助" placement="top">
-                <el-icon class="fb" :class="{ liked: m.feedback === 1 }" @click="setFeedback(m, 1)"><Top /></el-icon>
-              </el-tooltip>
-              <el-tooltip
-                :content="m.feedback === -1 && m.feedbackReason ? `已反馈：${reasonLabel(m.feedbackReason)}` : '回答不准确'"
-                placement="top"
-              >
-                <el-icon class="fb" :class="{ disliked: m.feedback === -1 }" @click="setFeedback(m, -1)"><Bottom /></el-icon>
-              </el-tooltip>
-              <!-- 重新生成：对同一问题再答一次。
-                   只在最后一条回答上显示 —— 用户通常是想"这条不满意，换个答案"，
-                   给所有历史回答都挂按钮反而干扰阅读。 -->
-              <el-tooltip
-                v-if="m === lastAssistantMessage && !sending"
-                content="换个答案重新生成"
-                placement="top"
-              >
-                <el-icon class="fb" @click="regenerate"><RefreshRight /></el-icon>
-              </el-tooltip>
+
+            <!-- 底部滚动锚点 -->
+            <div ref="bottomAnchor" />
             </div>
           </div>
 
-          <!-- 底部滚动锚点 -->
-          <div ref="bottomAnchor" />
-        </div>
-
-        <!-- 输入区 -->
-        <div class="input-bar">
-          <div class="input-wrap">
-            <el-input
-              v-model="inputText"
-              type="textarea"
-              :rows="2"
-              resize="none"
-              :placeholder="placeholder"
-              :disabled="sending"
-              @keydown="onKeydown"
-            />
-            <div class="input-actions">
-              <span class="input-tip">Enter 发送 · Shift+Enter 换行</span>
-              <el-button v-if="sending" type="danger" @click="stopGenerate">
-                <el-icon style="margin-right: 4px"><VideoPause /></el-icon>停止
-              </el-button>
-              <el-button v-else type="primary" :disabled="!inputText.trim() || loadingHistory" @click="send">
-                <el-icon style="margin-right: 4px"><Promotion /></el-icon>发送
-              </el-button>
+          <!-- 输入区 -->
+          <div class="input-bar">
+            <div class="input-wrap">
+              <el-input
+                v-model="inputText"
+                type="textarea"
+                :rows="2"
+                resize="none"
+                :placeholder="placeholder"
+                :disabled="sending"
+                @keydown="onKeydown"
+              />
+              <div class="input-actions">
+                <span class="input-tip">Enter 发送 · Shift+Enter 换行</span>
+                <el-button v-if="sending" type="danger" @click="stopGenerate">
+                  <el-icon style="margin-right: 4px"><VideoPause /></el-icon>停止
+                </el-button>
+                <el-button v-else type="primary" :disabled="!inputText.trim() || loadingHistory" @click="send">
+                  <el-icon style="margin-right: 4px"><Promotion /></el-icon>发送
+                </el-button>
+              </div>
             </div>
           </div>
+        </template>
+      </main>
+
+      <!-- 引用原文抽屉 -->
+      <el-drawer v-model="drawer.visible" :title="drawer.title" size="420px">
+        <div v-if="drawer.citation" class="cite-detail">
+          <div class="cite-meta">
+            <span class="cite-score">相关度 {{ (drawer.citation.score * 100).toFixed(0) }}%</span>
+            <span v-if="drawer.citation.page" class="cite-page">第 {{ drawer.citation.page }} 页</span>
+          </div>
+          <div class="cite-text">{{ drawer.citation.text }}</div>
         </div>
-      </template>
-    </main>
+      </el-drawer>
 
-    <!-- 引用原文抽屉 -->
-    <el-drawer v-model="drawer.visible" :title="drawer.title" size="420px">
-      <div v-if="drawer.citation" class="cite-detail">
-        <div class="cite-meta">
-          <span class="cite-score">相关度 {{ (drawer.citation.score * 100).toFixed(0) }}%</span>
-          <span v-if="drawer.citation.page" class="cite-page">第 {{ drawer.citation.page }} 页</span>
-        </div>
-        <div class="cite-text">{{ drawer.citation.text }}</div>
-      </div>
-    </el-drawer>
+      <!-- 删除确认 -->
+      <el-dialog v-model="delDialog.visible" title="删除会话" width="360px">
+        <p>删除后该会话的所有对话记录将无法恢复，确定删除吗？</p>
+        <template #footer>
+          <el-button @click="delDialog.visible = false">取消</el-button>
+          <el-button type="danger" @click="doDelete">删除</el-button>
+        </template>
+      </el-dialog>
 
-    <!-- 删除确认 -->
-    <el-dialog v-model="delDialog.visible" title="删除会话" width="360px">
-      <p>删除后该会话的所有对话记录将无法恢复，确定删除吗？</p>
-      <template #footer>
-        <el-button @click="delDialog.visible = false">取消</el-button>
-        <el-button type="danger" @click="doDelete">删除</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 点踩时的原因收集弹窗。
-         只在用户表达"不满意"时出现，不打断正常阅读。 -->
-    <FeedbackDialog
-      v-model="feedbackDialog.visible"
-      :submitting="feedbackDialog.submitting"
-      @submit="onFeedbackSubmit"
-    />
+      <!-- 点踩时的原因收集弹窗。
+           只在用户表达"不满意"时出现，不打断正常阅读。 -->
+      <FeedbackDialog
+        v-model="feedbackDialog.visible"
+        :submitting="feedbackDialog.submitting"
+        @submit="onFeedbackSubmit"
+      />
   </div>
 </template>
 
@@ -282,6 +292,13 @@ const demoQuestions = [
   '星耀空气净化器A8适用多大面积？',
   '星翼智能手表能带着游泳吗？',
 ]
+
+/** 顶部栏显示的检索范围标签 */
+const scopeKbLabel = computed<string>(() => {
+  if (!scopeKbId.value) return '全部知识库'
+  const kb = activeKbs.value.find((k) => k.id === scopeKbId.value)
+  return kb ? kb.name : '指定知识库'
+})
 
 const placeholder = computed(() => (sending.value ? 'AI 正在回答中…' : `向 ${scopeName.value} 提问…`))
 const scopeName = computed(() => {
@@ -838,11 +855,33 @@ async function scrollBottom(smooth = false) {
 }
 
 .chat-head {
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border-1);
+  padding: 0 24px;
+  height: 56px;
+  border-bottom: 1px solid var(--border-2);
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-card);
+  flex-shrink: 0;
+}
+
+.head-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.meta-tag {
+  border-radius: var(--radius-pill);
+  color: var(--text-3);
+  background: var(--bg-hover);
+  border-color: var(--border-1);
+}
+
+.meta-count {
+  font-size: var(--font-xs);
+  color: var(--text-4);
 }
 .chat-title {
   font-size: 15px;
@@ -857,8 +896,16 @@ async function scrollBottom(smooth = false) {
 .msg-list {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
-  background: #fff;
+  padding: 24px 20px 8px;
+  background: var(--bg-card);
+}
+
+/* 居中阅读栏：与输入框同宽，保证上下对齐。
+   人眼一行读 60~80 字符最舒服，820px 在 14px 字号下大致是这范围。 */
+.msg-inner {
+  max-width: 820px;
+  margin: 0 auto;
+  width: 100%;
 }
 .msg-row {
   display: flex;
@@ -892,7 +939,7 @@ async function scrollBottom(smooth = false) {
   box-shadow: 0 2px 6px rgba(75, 85, 99, 0.25);
 }
 .bubble {
-  max-width: min(76%, 780px);
+  max-width: 82%;
 }
 .user-text {
   /* 原来是微信绿，与全站蓝色系冲突。
@@ -1095,7 +1142,7 @@ async function scrollBottom(smooth = false) {
   background: var(--bg-card);
 }
 .input-wrap {
-  max-width: 860px;
+  max-width: 820px;
   margin: 0 auto;
 }
 .input-wrap :deep(.el-textarea__inner) {
