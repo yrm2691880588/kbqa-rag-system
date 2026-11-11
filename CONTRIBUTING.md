@@ -191,7 +191,7 @@ git check-ignore -v <文件路径>
 
 - **Issue**：写清楚复现步骤、预期行为、实际行为。能附截图/日志更好。
 - **Pull Request**：说明解决了什么问题、怎么验证的。小而聚焦的 PR 更容易合并。
-- **安全漏洞**：**不要**公开提 Issue，处理方式见 [SECURITY.md](SECURITY.md)。
+- **安全漏洞**：**不要**公开提 Issue，处理方式见 [.github/SECURITY.md](.github/SECURITY.md)。
 
 ---
 

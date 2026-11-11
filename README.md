@@ -301,8 +301,8 @@ CI 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)：后端测试
 
 ## 🤝 参与贡献
 
-本项目主要用于学习与交流，欢迎提 Issue 讨论。提交代码前请先看
-[docs/README.md](docs/README.md) 了解项目结构与约定。
+本项目主要用于学习与交流，欢迎提 Issue 讨论。
+提交代码前请先看上文「参与贡献」一节了解代码约定与提交流程。
 
 如果发现安全问题，请**不要**公开提 Issue，处理方式见 [SECURITY.md](.github/SECURITY.md)。
 
