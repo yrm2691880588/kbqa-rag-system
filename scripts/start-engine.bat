@@ -17,9 +17,10 @@ REM  已经启动过的部分会自动跳过。
 REM  关闭请双击项目根目录的「停止.bat」。
 REM ============================================================
 
-cd /d "%~dp0"
-set "ROOT=%~dp0"
-set "ROOT=%ROOT:~0,-1%"
+REM 本脚本在 scripts\ 下，根目录是它的上一级
+cd /d "%~dp0.."
+REM 用 %%~fI 把 "scripts\.." 解析成规范化的绝对路径
+for %%I in ("%~dp0..") do set "ROOT=%%~fI"
 set "PIDDIR=%ROOT%\.run"
 
 REM ---------- 端口配置（可在根目录 .env 里覆盖）----------

@@ -62,13 +62,14 @@ try {
     Write-Host ""
 
     # ---- 4. 设置环境变量并调用现有启动脚本 ----
-    # 现有 启动.bat 已经支持读 DOMAIN 环境变量（见该文件第 34 行附近），
+    # 启动引擎 scripts/start-engine.bat 支持读 DOMAIN 环境变量，
     # 所以这里只要把它设好，启动脚本就会加载对应领域。
     $env:DOMAIN = $domain.Name
 
-    $launcher = Join-Path $Root "启动.bat"
+    # 启动引擎在 scripts/ 下（根目录只留 选择启动.bat 一个入口）
+    $launcher = Join-Path $ScriptDir "start-engine.bat"
     if (-not (Test-Path $launcher)) {
-        Write-Host "  错误：找不到启动脚本 $launcher" -ForegroundColor Red
+        Write-Host "  错误：找不到启动引擎 $launcher" -ForegroundColor Red
         if (-not $NoPause) { Read-Host "按回车退出" | Out-Null }
         exit 1
     }
