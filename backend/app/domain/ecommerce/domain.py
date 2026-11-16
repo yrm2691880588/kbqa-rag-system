@@ -85,6 +85,18 @@ spec = DomainSpec(
         "S10 电池容量是多少",
         "耳机支持防水吗",
     ),
+
+    # ---------- 答案质量与范围（电商：中等严格）----------
+    answer_verify_rounds=1,
+    scope_description=(
+        "本知识库收录商品参数、使用方法、售后政策、价格信息。"
+    ),
+    out_of_scope_message=(
+        "这个问题不在本知识库的收录范围内。"
+        "我可以回答商品参数、使用方法与售后政策相关的问题。"
+    ),
+    allow_external_facts=False,
+    external_fact_hint="我无法获取实时信息（如物流状态、实时库存）。",
     open_intent_keywords=OPEN_INTENT_KEYWORDS,
     specific_hints=SPECIFIC_HINTS,
     # 别的领域的典型词：出现在电商库里说明用户多半问错了库，

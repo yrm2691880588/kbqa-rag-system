@@ -48,6 +48,14 @@ export interface MsgItem {
   blocked: boolean
   /** 已入库消息的真实 id（历史加载时有值） */
   msgId?: number
+  /**
+   * 答案自检多轮重做后仍不合格。
+   *
+   * 为 true 时 content 已被替换成"无法给出可靠回答"的说明 ——
+   * 界面上可以额外标一个提示，让用户知道这不是普通回答而是拒答，
+   * 避免误以为系统只是回答得简短。
+   */
+  verifiedFailed?: boolean
 }
 
 /** 消息 key 的自增序号。放在模块内，避免组件里再多一个可变状态。 */
@@ -74,6 +82,7 @@ export function toMsgItem(m: ApiMessageLike): MsgItem {
     noHitText: '',
     thinkingLabel: '',
     blocked: false,
+    verifiedFailed: false,
     msgId: m.id,
   }
 }

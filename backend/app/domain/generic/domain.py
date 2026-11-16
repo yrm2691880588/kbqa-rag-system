@@ -57,6 +57,12 @@ spec = DomainSpec(
     welcome_title="知识库智能问答",
     welcome_hint="点击左侧「新对话」开始提问。AI 将依据知识库资料回答，并标注引用来源。",
     example_questions=(),
+    # ---------- 答案质量与范围（通用：不额外增加开销）----------
+    answer_verify_rounds=0,
+    scope_description="",
+    out_of_scope_message="",
+    allow_external_facts=False,
+    external_fact_hint="我无法获取实时信息。",
     open_intent_keywords=OPEN_INTENT_KEYWORDS,
     specific_hints=SPECIFIC_HINTS,
     # 通用领域不知道用户是什么行业，但电商/财经是最常见的两类，

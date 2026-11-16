@@ -88,6 +88,10 @@ export type StreamEvent =
   | { type: 'saved'; message_id: number }
   // 回答命中内容安全策略：后端已停止生成，前端要用 text 把已显示的内容整体覆盖掉
   | { type: 'blocked'; text: string; mode: string }
+  // 答案自检未通过后重做的完整答案：整体替换已流出的内容
+  | { type: 'replace'; text: string }
+  // 自检结论：ok=false 表示多轮重做后仍不合格
+  | { type: 'verified'; ok: boolean; reason?: string }
   | { type: 'error'; message: string }
 
 /**
@@ -182,6 +186,12 @@ export function streamChat(
                 break
               case 'saved':
                 onEvent({ type: 'saved', message_id: Number(data.message_id) })
+                break
+              case 'replace':
+                onEvent({ type: 'replace', text: data.text ?? '' })
+                break
+              case 'verified':
+                onEvent({ type: 'verified', ok: Boolean(data.ok), reason: data.reason ?? '' })
                 break
               case 'blocked':
                 onEvent({ type: 'blocked', text: data.text ?? '', mode: data.mode ?? 'replace' })

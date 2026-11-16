@@ -448,6 +448,20 @@ async function send(opts: { question?: string; regenerate?: boolean } = {}) {
           hasStreamedAnswer = true
           item.typing = false
           break
+        case 'replace':
+          // 自检未通过后重做的完整答案：**整体替换**已流出的内容。
+          //
+          // 为什么是替换而不是追加：
+          //   追加会让用户看到"答案 + 更正"两段，读完还得自己判断以哪个为准。
+          //   直接替换成核查过的版本，用户看到的永远只有一份最终答案。
+          item.content = ev.text
+          hasStreamedAnswer = true
+          item.typing = false
+          break
+        case 'verified':
+          // 自检结论：false 表示多轮重做后仍不合格（此时 content 已被替换成说明）
+          if (!ev.ok) item.verifiedFailed = true
+          break
         case 'no_hit':
           item.noHit = true
           item.noHitText = ev.message

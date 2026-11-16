@@ -113,6 +113,18 @@ class Settings(BaseSettings):
     retrieval_margin_ratio: float = 0.72  # 相对过滤：候选按"文档最高分"排序后，分数低于
     #                                  # 最高分文档的 ratio 倍的文档整篇丢弃（去噪关键参数）
     retrieval_max_docs: int = 3          # 回答最多引用几篇不同文档（避免无关文档凑数）
+
+    # ---------- 多轮对话的问题改写 ----------
+    #
+    # 解决什么问题：同一会话里用户追问"这三家谁的利润最好"，
+    # 而知识库文档里写的是具体公司名 —— 检索拿"这三家"必然搜不到。
+    # 改写后变成"海联银行 启明科技 长风能源 净利润 毛利率"再检索。
+    #
+    # 关掉（false）后行为与改造前完全一致，不发任何额外请求。
+    query_rewrite_enabled: bool = True
+    query_rewrite_history_rounds: int = 3   # 改写时参考最近几轮对话（太多容易把改写带偏）
+    query_rewrite_max_len: int = 80         # 改写结果长度上限，超了认为模型没按要求输出
+
     retrieval_chunks_per_doc: int = 2    # 同一文档内最多取几条片段（防刷屏）
     llm_max_history_rounds: int = 8     # 多轮对话中最多携带几轮历史进上下文
     llm_max_tokens: int = 2048          # 单次回答最大输出长度

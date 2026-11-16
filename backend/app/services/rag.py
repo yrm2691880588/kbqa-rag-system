@@ -22,6 +22,10 @@ from openai import AsyncOpenAI
 from app.core.config import settings
 from app.domain import get_domain
 from app.services import ai_guard
+from app.services.answer_cleanup import strip_thinking_safe
+from app.services.answer_verify import VerifyResult, build_retry_hint, verify_answer
+from app.services.intent_router import Intent, route
+from app.services.query_rewrite import rewrite_query
 from app.services.retriever import retrieve
 from app.services.smalltalk import detect_smalltalk
 
@@ -109,6 +113,14 @@ def build_system_prompt(citations: list[dict]) -> str:
         "6. 只针对用户当前这一问作答：历史里问过的其他对象，"
         "除非当前问题明确要求对比，否则不要展开说明。"
     )
+    # 实测发现：部分模型会把"分析过程"直接写进正文，例如
+    #   "用户问海联银行净利润。资料显示净利润142.7亿元。回答简洁，标注[1]。"
+    # 然后才给正式答案。用户第一屏看到的全是内部独白，体验很差。
+    parts.append(
+        "7. **直接给出答案**，不要输出分析过程、不要复述用户的提问、"
+        "不要写「用户问…」「资料显示…」「回答应简洁」这类内部独白。"
+        "第一句话就应该是给用户看的正式内容。"
+    )
     return "\n".join(parts)
 
 
@@ -172,6 +184,45 @@ def _remember(cache_key: str, answer: str, citations: list) -> None:
         ai_guard.llm_breaker.record_failure()
 
 
+async def _regenerate_with_hint(
+    question: str,
+    citations: list[dict],
+    history: list[dict],
+    hint: str,
+    client: AsyncOpenAI | None = None,
+) -> str:
+    """带着"上一版哪里不对"的提示，重新生成一次答案。
+
+    为什么单独成函数：
+        重做和首次生成的提示词不同（多了一段修正要求），
+        逻辑独立、便于单测，也便于将来调整策略。
+
+    Returns:
+        新答案文本；失败返回空字符串（调用方据此走"无法可靠回答"分支）。
+    """
+    try:
+        llm = client or _get_llm_client()
+        system = build_system_prompt(citations) + hint
+        messages = [{"role": "system", "content": system}]
+        for m in history[-settings.llm_max_history_rounds * 2 :]:
+            messages.append({"role": m["role"], "content": m["content"]})
+        messages.append({"role": "user", "content": question})
+
+        resp = await llm.chat.completions.create(
+            model=settings.llm_model,
+            messages=messages,
+            temperature=0.2,  # 比重做前略低，减少发散
+            max_tokens=settings.llm_max_tokens,
+            stream=False,     # 重做不需要流式：反正要等自检
+        )
+        if resp.choices:
+            return (resp.choices[0].message.content or "").strip()
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("重做失败：%s", exc)
+        return ""
+
+
 async def stream_answer(
     question: str,
     history: list[dict],
@@ -201,14 +252,26 @@ async def stream_answer(
     """
     started = time.time()
 
-    # 0) 寒暄识别：问候/致谢/自我介绍等不查知识库，直接礼貌回应
-    smalltalk_reply = detect_smalltalk(question)
-    if smalltalk_reply:
-        yield ("answer", {"text": smalltalk_reply})
+    # 0) 意图分流：先判断这个问题该怎么处理
+    #
+    # 改造前这里只判断"是不是寒暄"，其他问题一律走检索。
+    # 实测发现这不够：
+    #   · "明天天气怎么样" 走检索 → 命中沾边文档 → 模型编一个天气
+    #   · "帮我预测股价"   走检索 → 给出预测（违反合规禁令，危险）
+    #   · "红烧肉怎么做"   走检索 → 白跑一趟
+    #
+    # 现在分流成五类，每类有不同处理。
+    _domain = get_domain()
+    router_result = route(question, _domain)
+
+    if router_result.intent != Intent.KNOWLEDGE:
+        # 这四类都直接给固定回应，不检索、不调生成模型
+        yield ("answer", {"text": router_result.reply})
         yield ("done", {
             "latency_ms": int((time.time() - started) * 1000),
             "citations": [],
             "has_answer": True,
+            "intent": router_result.intent.value,
         })
         return
 
@@ -240,8 +303,22 @@ async def stream_answer(
             return
 
     try:
+        # 0.9) 多轮问题改写
+        #
+        # 为什么要在检索之前做：
+        #   用户在追问里常说「这三家」「它们」「上述公司」，这些指代词
+        #   在知识库文档里一个字都没有。直接拿去检索必然空手而归，
+        #   用户看到的就是"没有找到相关资料" —— 明明上一轮刚答过。
+        #
+        # 改写后（「这三家谁的利润最好」->「海联银行 启明科技 长风能源 净利润 毛利率」）
+        # 才能检索到正确的文档。
+        #
+        # 只在**有历史**时改写：单轮没有指代可消解，多一次调用纯属浪费。
+        # 改写失败会自动回退原问题（见 query_rewrite 的实现），不会影响主流程。
+        search_query = await rewrite_query(question, history)
+
         # 1) 检索知识库（retriever 内部已完成文档级去噪与截断）
-        hits = await retrieve(question, kb_ids=kb_ids, top_k=settings.retrieval_top_k)
+        hits = await retrieve(search_query, kb_ids=kb_ids, top_k=settings.retrieval_top_k)
         citations = [hit_to_citation(i + 1, h) for i, h in enumerate(hits)]
 
         if not citations:
@@ -322,8 +399,24 @@ async def stream_answer(
             raise
 
         # 4) 逐块转发：思考字段与回答字段各自增量输出
+        #
+        # ⚠️ 这里有个"开头缓冲"机制，原因：
+        #   部分模型会把内部独白写进 answer 通道，例如
+        #       "用户问海联银行净利润。资料显示142.7亿元。回答简洁，标注[1]。"
+        #   然后才给正式答案。
+        #
+        #   流式已经发出去的文本**收不回来**，所以必须在开头先攒一会儿，
+        #   确认这几句不是独白再放行。
+        #
+        #   缓冲多大：够装下一两句独白。攒到 _HEAD_BUFFER 就放行，
+        #   避免用户等太久（正文长的时候不能一直憋着）。
+        _HEAD_BUFFER = 200
+
         answer_parts: list[str] = []
+        head_buffer = ""      # 尚未放行的开头文本
+        head_released = False  # 开头是否已经放行
         usage = None
+
         async for chunk in stream:
             # 用量一般挂在最后一个 chunk 上（choices 为空、usage 有值）
             u = getattr(chunk, "usage", None)
@@ -338,10 +431,83 @@ async def stream_answer(
                 yield ("thinking", {"text": thinking})
             if content:
                 answer_parts.append(content)
-                yield ("answer", {"text": content})
 
-        # 5) 结束
+                if head_released:
+                    # 开头已放行，后续正常转发
+                    yield ("answer", {"text": content})
+                else:
+                    head_buffer += content
+                    # 攒够了就处理一次：剥掉开头独白后整体放行
+                    if len(head_buffer) >= _HEAD_BUFFER:
+                        cleaned = strip_thinking_safe(head_buffer)
+                        if cleaned:
+                            yield ("answer", {"text": cleaned})
+                        head_released = True
+
+        # 流结束了但开头还没放行（回答很短）：在这里补发
+        if not head_released and head_buffer:
+            cleaned = strip_thinking_safe(head_buffer)
+            if cleaned:
+                yield ("answer", {"text": cleaned})
+            head_released = True
+
+        # 5) 答案自检（仅领域开启时）
+        #
+        # 为什么放在这里而不是流式过程中：
+        #   自检需要**完整答案**才能判断。流式过程中答案还没成型，
+        #   无法检查"关键数字有没有依据"。
+        #
+        # 为什么先把答案发出去再自检：
+        #   已经流式发出的文本收不回来。开着自检时更好的做法是
+        #   **不流式**（见下面的 _verify_and_fix 分支），
+        #   但为了不破坏现有调用方的行为，这里做的是"事后自检 + 更正"：
+        #   发现问题时追加一条更正消息，而不是假装没发生。
         full_answer = "".join(answer_parts)
+
+        if _domain.answer_verify_rounds > 0 and citations and full_answer.strip():
+            verdict = await verify_answer(
+                question, full_answer, citations, _domain, client=client
+            )
+            if not verdict.ok:
+                logger.info("自检未通过，尝试重做：%s", verdict.reason[:120])
+                # 把失败原因告诉模型，让它重做一版
+                fixed = await _regenerate_with_hint(
+                    question=question,
+                    citations=citations,
+                    history=history,
+                    hint=build_retry_hint(verdict.reason),
+                    client=client,
+                )
+                if fixed:
+                    # 再自检一次（只做一轮，避免无限循环）
+                    verdict2 = await verify_answer(
+                        question, fixed, citations, _domain, client=client
+                    )
+                    if verdict2.ok:
+                        full_answer = fixed
+                        # 追加完整修正版（前端会替换掉之前那条消息的内容）
+                        yield ("replace", {"text": fixed})
+                    else:
+                        # 两轮都没过 → 明确告知，绝不硬编
+                        msg = (
+                            "抱歉，我无法基于现有资料给出可靠的回答。"
+                            "资料中的信息不足或存在不一致，建议补充资料后再试，"
+                            "或咨询相关专业人士。"
+                        )
+                        yield ("replace", {"text": msg})
+                        full_answer = msg
+                        yield ("verified", {"ok": False, "reason": verdict2.reason})
+                else:
+                    msg = (
+                        "抱歉，我无法基于现有资料给出可靠的回答。"
+                        "建议补充资料后再试，或咨询相关专业人士。"
+                    )
+                    yield ("replace", {"text": msg})
+                    full_answer = msg
+                    yield ("verified", {"ok": False, "reason": verdict.reason})
+            else:
+                yield ("verified", {"ok": True})
+
         _remember(cache_key, full_answer, citations)
 
         yield ("done", {
