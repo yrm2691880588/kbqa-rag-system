@@ -54,7 +54,7 @@ async def list_sessions(
         .outerjoin(Message, Message.session_id == ChatSession.id)
         .where(
             ChatSession.user_id == current_user.id,
-            # 只列出当前领域的会话：切到财经后，电商的历史会话不应出现
+            # 只列出当前领域的会话：切到别的领域后，原领域的历史会话不应出现
             ChatSession.domain == get_domain().name,
         )
         .group_by(ChatSession.id)

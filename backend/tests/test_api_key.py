@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
 
+from app.domain import get_domain
 from app.core import api_key_auth as ka
 from app.core.tenancy import accessible_kb_ids_for_org, resolve_kb_scope_for_org
 from app.db.base import Base
@@ -88,9 +89,9 @@ class ApiKeyTestCase(unittest.TestCase):
             ])
             await db.flush()
             db.add_all([
-                KnowledgeBase(id=1, name="A家手册", org_id=1),
-                KnowledgeBase(id=2, name="B家手册", org_id=2),
-                KnowledgeBase(id=3, name="没主的库", org_id=None),
+                KnowledgeBase(id=1, name="A家手册", org_id=1, domain=get_domain().name),
+                KnowledgeBase(id=2, name="B家手册", org_id=2, domain=get_domain().name),
+                KnowledgeBase(id=3, name="没主的库", org_id=None, domain=get_domain().name),
             ])
             await db.commit()
 

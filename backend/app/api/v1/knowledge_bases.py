@@ -81,7 +81,7 @@ async def list_knowledge_bases(current_user: CurrentUser, db: DbSession, all: bo
     all=1 且为管理员时，可以看到本组织内已停用的库；否则只列启用中的。
     （注意：平台超管也只在"自己的组织"范围内看列表，需要跨组织请用组织管理接口。）
     """
-    # 只列出**当前领域**的库：切到财经领域后，电商的库不应出现
+    # 只列出**当前领域**的库：切到别的领域后，原领域的库不应出现
     stmt = (
         select(KnowledgeBase)
         .where(KnowledgeBase.domain == get_domain().name)

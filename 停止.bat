@@ -55,7 +55,7 @@ echo.
 REM ---------- 2.5) 清理 uvicorn reload 产生的孤儿子进程 ----------
 echo [3/4] 清理残留的 uvicorn 子进程...
 powershell -NoProfile -Command ^
-  "$n = 0; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue | ForEach-Object { if ($_.CommandLine -match 'multiprocessing-fork' -and $_.CommandLine -match 'parent_pid') { $parent = $_.ParentProcessId; $alive = Get-Process -Id $parent -ErrorAction SilentlyContinue; if (-not $alive) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ } } }; Write-Output ('  清理孤儿进程: ' + $n + ' 个')"
+  "$root = '%ROOT%'; $n = 0; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue | ForEach-Object { if ($_.CommandLine -match 'multiprocessing-fork' -and $_.CommandLine -match 'parent_pid') { if ($_.CommandLine -like ('*' + $root + '*')) { $parent = $_.ParentProcessId; $alive = Get-Process -Id $parent -ErrorAction SilentlyContinue; if (-not $alive) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ } } } }; Write-Output ('  清理本项目孤儿进程: ' + $n + ' 个')"
 if errorlevel 1 echo   [提示] 孤儿进程清理跳过（无 PowerShell 或无残留）。
 
 REM ---------- 3) 数据库容器 ----------

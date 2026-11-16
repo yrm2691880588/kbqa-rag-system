@@ -115,7 +115,7 @@ def build_system_prompt(citations: list[dict]) -> str:
         "除非当前问题明确要求对比，否则不要展开说明。"
     )
     # 实测发现：部分模型会把"分析过程"直接写进正文，例如
-    #   "用户问海联银行净利润。资料显示净利润142.7亿元。回答简洁，标注[1]。"
+    #   "用户问某某指标。资料显示该指标为某个数值。回答简洁，标注[1]。"
     # 然后才给正式答案。用户第一屏看到的全是内部独白，体验很差。
     parts.append(
         "7. **直接给出答案**，不要输出分析过程、不要复述用户的提问、"
@@ -434,7 +434,7 @@ async def stream_answer(
         #   在知识库文档里一个字都没有。直接拿去检索必然空手而归，
         #   用户看到的就是"没有找到相关资料" —— 明明上一轮刚答过。
         #
-        # 改写后（「这三家谁的利润最好」->「海联银行 启明科技 长风能源 净利润 毛利率」）
+        # 改写后（「这几家谁的指标最好」->「公司A 公司B 公司C 指标名 对比」）
         # 才能检索到正确的文档。
         #
         # 只在**有历史**时改写：单轮没有指代可消解，多一次调用纯属浪费。
@@ -547,7 +547,7 @@ async def stream_answer(
         #
         # ⚠️ 这里有个"开头缓冲"机制，原因：
         #   部分模型会把内部独白写进 answer 通道，例如
-        #       "用户问海联银行净利润。资料显示142.7亿元。回答简洁，标注[1]。"
+        #       "用户问某某指标。资料显示某个数值。回答简洁，标注[1]。"
         #   然后才给正式答案。
         #
         #   流式已经发出去的文本**收不回来**，所以必须在开头先攒一会儿，
@@ -610,12 +610,59 @@ async def stream_answer(
         full_answer = "".join(answer_parts)
 
         if _domain.answer_verify_rounds > 0 and citations and full_answer.strip():
-            verdict = await verify_answer(
-                question, full_answer, citations, _domain, client=client
-            )
-            if not verdict.ok:
-                logger.info("自检未通过，尝试重做：%s", verdict.reason[:120])
-                # 把失败原因告诉模型，让它重做一版
+            # ------------------------------------------------------------
+            # 自检 + 打回重做循环
+            #
+            # 为什么要循环而不是固定做一次（这是一个真实缺陷的修复）：
+            #   配置字段叫 answer_verify_rounds（复数，语义是"最多重试几次"），
+            #   finance 领域配了 2。但原实现写死"只重做一次"，
+            #   于是配 1 和配 2 行为完全一样 —— 配置形同虚设。
+            #
+            #   用户的原话是「自检没通过的话，希望能够打回，
+            #   然后在此基础上进行完善，再继续」——
+            #   "再继续"意味着允许多轮，不是一轮就放弃。
+            #
+            # 为什么要有上限：
+            #   每轮重做都是一次完整的模型调用。没有上限时，
+            #   如果自检始终不通过（比如资料本身矛盾），会一直烧钱。
+            #
+            # 循环结构：
+            #   第 0 轮：检查初次答案
+            #   第 N 轮（N < rounds）：不合格 → 带着原因重做 → 再检查
+            #   用完次数仍不合格 → 明确告知，绝不硬编
+            # ------------------------------------------------------------
+            rounds = max(0, int(_domain.answer_verify_rounds))
+            attempt = 0
+            last_reason = ""
+            verified_ok = False
+
+            while attempt <= rounds:
+                verdict = await verify_answer(
+                    question, full_answer, citations, _domain, client=client
+                )
+
+                if verdict.ok:
+                    if attempt == 0:
+                        yield ("verified", {"ok": True})
+                    else:
+                        # 重做后通过了：把修正版整体替换掉已流出的旧答案
+                        yield ("replace", {"text": full_answer})
+                        yield ("verified", {"ok": True, "attempts": attempt})
+                    verified_ok = True
+                    break
+
+                last_reason = verdict.reason
+
+                # 还有重做次数吗？
+                if attempt >= rounds:
+                    break
+
+                attempt += 1
+                logger.info(
+                    "自检未通过（第 %d/%d 轮），尝试重做：%s",
+                    attempt, rounds, verdict.reason[:120],
+                )
+
                 fixed = await _regenerate_with_hint(
                     question=question,
                     citations=citations,
@@ -623,35 +670,24 @@ async def stream_answer(
                     hint=build_retry_hint(verdict.reason),
                     client=client,
                 )
-                if fixed:
-                    # 再自检一次（只做一轮，避免无限循环）
-                    verdict2 = await verify_answer(
-                        question, fixed, citations, _domain, client=client
-                    )
-                    if verdict2.ok:
-                        full_answer = fixed
-                        # 追加完整修正版（前端会替换掉之前那条消息的内容）
-                        yield ("replace", {"text": fixed})
-                    else:
-                        # 两轮都没过 → 明确告知，绝不硬编
-                        msg = (
-                            "抱歉，我无法基于现有资料给出可靠的回答。"
-                            "资料中的信息不足或存在不一致，建议补充资料后再试，"
-                            "或咨询相关专业人士。"
-                        )
-                        yield ("replace", {"text": msg})
-                        full_answer = msg
-                        yield ("verified", {"ok": False, "reason": verdict2.reason})
-                else:
-                    msg = (
-                        "抱歉，我无法基于现有资料给出可靠的回答。"
-                        "建议补充资料后再试，或咨询相关专业人士。"
-                    )
-                    yield ("replace", {"text": msg})
-                    full_answer = msg
-                    yield ("verified", {"ok": False, "reason": verdict.reason})
-            else:
-                yield ("verified", {"ok": True})
+
+                if not fixed:
+                    # 重做本身失败（模型超时/空响应）→ 不再重试，直接如实告知
+                    logger.warning("重做未产出内容，停止重试")
+                    break
+
+                full_answer = fixed
+
+            if not verified_ok:
+                # 用完所有轮次仍不合格 → 明确告知，绝不硬编
+                msg = (
+                    "抱歉，我无法基于现有资料给出可靠的回答。"
+                    "资料中的信息不足或存在不一致，建议补充资料后再试，"
+                    "或咨询相关专业人士。"
+                )
+                yield ("replace", {"text": msg})
+                full_answer = msg
+                yield ("verified", {"ok": False, "reason": last_reason})
 
         _remember(cache_key, full_answer, citations)
 

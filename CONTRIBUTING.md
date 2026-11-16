@@ -67,11 +67,27 @@ $env:DOMAIN="ecommerce"; python run_tests.py
 
 | DOMAIN | Core 用例 | 领域用例 |
 |---|---|---|
-| `generic` | 529 | 0 |
-| `ecommerce` | 529 | 18 |
-| `finance` | 529 | 10 |
+| `generic` | 581 | 0 |
+| `ecommerce` | 581 | 18 |
+| `finance` | 581 | 10 |
+
+> 基线会随功能增加而变化。如果你加了测试，请顺手更新这张表 ——
+> 数字对不上的话，下一个人会怀疑是自己弄坏了什么。
 
 本地无 PostgreSQL 时会跳过 3 个需真库的用例。
+
+### 工具与新增能力
+
+以下模块有独立测试，改动时请确保它们仍然通过：
+
+| 测试文件 | 覆盖内容 |
+|---|---|
+| `tests/test_tools.py` | 计算器安全性（12 种注入）、日期解析、注册表、工具描述 |
+| `tests/test_intent_routing.py` | 意图分流（闲聊/违规/实时/超范围/正常），重点验证不误伤 |
+| `tests/test_domain_data_isolation.py` | 领域字段、唯一约束、隔离 |
+| `tests/test_embedding_batch.py` | 向量化批次上限 |
+
+**特别注意**：`test_tools.py` 里的注入测试是安全边界，不能为了让它变绿而放宽校验。
 
 ### 前端测试
 

@@ -180,7 +180,7 @@ def _ensure_domain_columns(sync_conn) -> None:
 
     默认值 generic：
         老数据不属于任何明确领域，归到通用领域。
-        不假设"旧数据都是电商的"—— 那种假设将来很难纠正。
+        不假设"旧数据都属于某个特定领域"—— 那种假设将来很难纠正。
     """
     dialect = sync_conn.dialect.name
 

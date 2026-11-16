@@ -29,6 +29,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.domain import get_domain
 from app.api.v1 import knowledge_bases as kb_api
 from app.core.config import Settings, settings
 from app.core import startup_check as sc
@@ -58,7 +59,8 @@ class UploadLimitTestCase(unittest.TestCase):
                 db.add_all([
                     Organization(id=1, name="甲公司", invite_code="c1"),
                     User(id=1, username="admin_a", password_hash="x", role="admin", org_id=1),
-                    KnowledgeBase(id=1, name="手册", org_id=1),
+                    # domain 必须与当前加载的领域一致，否则 get_scoped_kb 会返回 404
+                    KnowledgeBase(id=1, name="手册", org_id=1, domain=get_domain().name),
                 ])
                 await db.commit()
 
