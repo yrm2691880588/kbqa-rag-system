@@ -3,7 +3,7 @@
 流程：
 1. 校验会话归属 → 读该会话历史 → 存下用户提问消息；
 2. 首轮提问且会话仍叫"新对话"时，自动用问题前几字生成标题；
-3. **开放性意图短路**：若问题被识别为"列举/总览"类（如"介绍一下本商品""有哪些商品"），
+3. **开放性意图短路**：若问题被识别为"列举/总览"类（如"介绍全部资料""有哪些内容"），
    直接从数据库读知识库与文档清单主动列给用户，避免生硬的"未找到资料"；
 4. 否则调用 rag.stream_answer 流式生成，逐事件转发给前端（meta/thinking/answer/no_hit/done/error）；
 5. 流结束后把 assistant 回答（含引用快照）写入消息表，并记录问答日志（管理员洞察用）。
@@ -188,7 +188,7 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
 
         async with AsyncSessionLocal() as adb:
             try:
-                # 0) 开放性意图短路：用户问"介绍一下本商品/有哪些商品"时，直接从 DB 列清单，
+                # 0) 开放性意图短路：用户问"介绍全部资料/有哪些内容"时，直接从 DB 列清单，
                 #    避免生硬的"未找到资料"。
                 if detect_open_intent(question):
                     text = await _build_guided_listing(adb, kb_ids, org_id)
@@ -380,7 +380,7 @@ async def _build_guided_listing(db, kb_ids: list[int] | None, org_id: int | None
     domain = get_domain()
     lines: list[str] = []
     # 示例问题必须来自领域配置：
-    #   写死成电商问题（A8/S10/耳机），在财经项目里会完全跑题。
+    #   写死成某个行业的问题，换领域后会完全跑题。
     #   领域没配示例问题时不带举例。
     if domain.example_questions:
         examples = "」「".join(domain.example_questions)

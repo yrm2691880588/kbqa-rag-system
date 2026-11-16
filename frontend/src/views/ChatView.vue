@@ -288,8 +288,8 @@ let abortCtrl: AbortController | null = null
 const msgListRef = ref<HTMLElement>()
 const bottomAnchor = ref<HTMLElement>()
 
-// 示例问题来自领域配置（电商是手机参数，财经是财报指标）。
-// 原来写死成电商问题，导出财经项目后点开就是一串手机型号，完全跑题。
+// 示例问题来自领域配置，不同领域各不相同。
+// 原来写死成某个行业的问题，换领域后点开就完全跑题。
 const demoQuestions = computed(() => domain.config.value.example_questions)
 
 /** 顶部栏显示的检索范围标签 */

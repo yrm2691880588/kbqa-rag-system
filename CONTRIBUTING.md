@@ -49,10 +49,29 @@ npm run dev
 
 ```bash
 cd backend
-python -m unittest discover -s tests -t . -v
+
+# 跑「Core 通用测试 + 当前领域的专属测试」
+DOMAIN=ecommerce python run_tests.py
+
+# Windows PowerShell 写法
+$env:DOMAIN="ecommerce"; python run_tests.py
 ```
 
-当前基线：**511 个用例，应全部通过**（本地无 PostgreSQL 时会跳过 3 个需真库的用例）。
+**不要**直接用 `python -m unittest discover -s tests`：
+该命令只扫 `tests/` 目录，**发现不到** `app/domain/<name>/tests/` 下的领域专属测试 ——
+表现为"跑了 529 个用例全过"，其实领域测试一个都没跑。这是静默漏测。
+
+`run_tests.py` 会把两处都纳入，且分两批执行（避免两个测试包同名冲突）。
+
+当前基线（三个领域各跑一遍，均应通过）：
+
+| DOMAIN | Core 用例 | 领域用例 |
+|---|---|---|
+| `generic` | 529 | 0 |
+| `ecommerce` | 529 | 18 |
+| `finance` | 529 | 10 |
+
+本地无 PostgreSQL 时会跳过 3 个需真库的用例。
 
 ### 前端测试
 

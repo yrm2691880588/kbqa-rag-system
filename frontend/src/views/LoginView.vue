@@ -6,7 +6,7 @@
       <div class="brand-logo">
         <el-icon :size="26"><ChatDotRound /></el-icon>
       </div>
-      <!-- 标题与口号来自后端领域配置：导出财经项目后自动变成财经的文案，
+      <!-- 标题与口号来自后端领域配置：换领域后自动变成对应文案，
            前端不需要改代码，也不需要重新构建 -->
       <h1 class="brand-title">{{ domain.config.value.app_title }}</h1>
       <p class="brand-desc">{{ domain.config.value.login_slogan }}</p>
