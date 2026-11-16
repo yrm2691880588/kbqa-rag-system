@@ -79,7 +79,18 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = "text-embedding-v4"
     embedding_dimensions: int = 1024        # v4 默认 1024 维
-    embedding_batch_size: int = 16          # 每次同时向量化多少段文本（节省请求数）
+    # 每次同时向量化多少段文本。
+    #
+    # ⚠️ 上限 10 是供应商的硬限制，不是我们随便定的：
+    #   DashScope text-embedding-v4 单次请求最多 10 条文本，
+    #   超过会报 "batch size is invalid, it should not be larger than 10"。
+    #
+    # 实测踩过这个坑：原来是 16。普通的 .md 文档片段少（6~9 个），
+    # 凑不满 16 所以没出错；但 Excel 有 40 个片段，第一批 16 条直接被拒，
+    # 表现为"入库失败"。
+    #
+    # 换 embedding 供应商时要重新确认这个上限。
+    embedding_batch_size: int = 10
     embedding_max_retries: int = 3          # 网络抖动时重试次数
     embedding_timeout: int = 60             # 单次请求超时（秒）
 

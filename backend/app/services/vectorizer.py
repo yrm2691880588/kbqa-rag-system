@@ -30,13 +30,30 @@ def get_client() -> AsyncOpenAI:
     return _client
 
 
+# 单次 embedding 请求允许的最大文本条数。
+#
+# DashScope text-embedding-v4 的硬限制是 10，超过会返回 400：
+#   "batch size is invalid, it should not be larger than 10"
+#
+# 换供应商时改这一个常量即可。
+_MAX_EMBED_BATCH = 10
+
+
 async def embed_texts(texts: list[str]) -> list[list[float]]:
     """把一段段文本转成向量，返回与输入顺序一一对应的向量列表。"""
     if not texts:
         return []
     client = get_client()
     results: list[list[float]] = []
-    batch_size = settings.embedding_batch_size
+
+    # 批次大小做双重保护：
+    #
+    # 1) 配置里已设为 10（供应商上限），但配置可能被 .env 改大；
+    # 2) 换供应商时上限可能不同。
+    #
+    # 这里再夹一次，避免"配置写错 → 整个文件入库失败"。
+    # 代价只是多几次请求，比"文件传不进去"轻得多。
+    batch_size = max(1, min(settings.embedding_batch_size, _MAX_EMBED_BATCH))
 
     for start in range(0, len(texts), batch_size):
         batch = texts[start : start + batch_size]
