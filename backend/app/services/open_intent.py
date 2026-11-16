@@ -26,33 +26,35 @@ False  # 虽含"有什么",但带具体属性词+型号,按具体问题交给 RA
 import re
 
 
-# 列举/总览意图关键词（按从强到弱排列）
-# 仅收录"想要一个清单/总览"的明确表达，不收录太宽的"有什么""怎么样"等。
-_OPEN_INTENT_KEYWORDS: tuple[str, ...] = (
-    "介绍一下本商品", "介绍一下商品信息", "介绍一下商品",
-    "介绍下商品", "介绍下本商品",
-    "介绍一下产品", "介绍下产品",
-    "介绍一下",                       # 仅在无具体型号时算开放
-    "有哪些商品", "有什么商品", "有什么可选", "有什么选择",
-    "全部商品", "所有商品", "商品列表", "商品总览", "商品有哪些",
-    "都有哪些商品", "都有什么商品",
-    "你能介绍", "给我介绍", "给我说说",
-    "你们有什么", "你们有哪些", "你们卖什么", "你们卖哪些",
-)
+# ---------------------------------------------------------------------------
+# 词表来源：领域模块
+# ---------------------------------------------------------------------------
+# 这两组词原本写死在本文件里（「商品」「手机」「电池」……），
+# 现在由领域模块提供 —— 因为不同领域的用词完全不同：
+#   电商：有哪些商品 / S10 / 手机
+#   财经：有哪些股票 / 招商银行 / 市盈率
+#
+# 判断**逻辑**仍留在这里（它是通用的：先命列举词、再排除具体词），
+# 只有词表内容移到了 app/domain/<name>/domain.py。
+#
+# 为什么用函数而不是模块级常量：
+#   模块级常量在 import 时就固定，测试里想切换领域就必须重新 import 模块，
+#   很别扭。改成函数调用后，配合 app.domain.reset_for_testing() 就能切换。
 
-# 命中"列举意图"后还必须**不包含**具体型号/品类词,才判为真正的开放性问题。
-# 否则"介绍一下 S10"会变成"列商品",而 S10 是具体商品应走 RAG。
-_SPECIFIC_HINTS: tuple[str, ...] = (
-    # 型号类：字母+数字或常见手机/耳机型号
-    "S10", "S20", "S30", "A8", "A10", "A20",
-    "Pro", "Pro2", "Max", "Plus", "Mini", "Ultra", "Lite", "Neo", "Note",
-    "Watch2", "Watch3", "Watch ", "Buds", "Free",
-    # 商品品类（出现即代表用户说的是具体一类商品）
-    "手机", "耳机", "手表", "净化器", "冰箱", "笔记本", "平板", "音箱", "电视", "相机",
-    # 常见属性词（电池/快充/防水/屏幕 等 → 表明用户问的是具体属性,非列举）
-    "电池", "续航", "充电", "快充", "屏幕", "摄像", "拍照", "像素",
-    "防水", "降噪", "价格", "多少钱", "参数", "配置", "规格", "保修", "售后",
-)
+
+def _open_intent_keywords() -> tuple[str, ...]:
+    """当前领域的列举意图词。"""
+    from app.domain import get_domain
+
+    return get_domain().open_intent_keywords
+
+
+def _specific_hints() -> tuple[str, ...]:
+    """当前领域的具体对象词（命中即不算列举）。"""
+    from app.domain import get_domain
+
+    return get_domain().specific_hints
+
 
 
 def _normalize(question: str) -> str:
@@ -67,25 +69,25 @@ def detect_open_intent(question: str) -> bool:
 
     触发条件：**同时满足**
     1. 句子非空
-    2. 包含列举意图关键词（_OPEN_INTENT_KEYWORDS）
-    3. 不含具体型号/品类/属性提示词（_SPECIFIC_HINTS）
+    2. 包含当前领域配置的列举意图关键词
+    3. 不含当前领域配置的具体对象提示词
 
     Args:
         question: 用户输入原文。
 
     Returns:
-        True=开放性意图，应主动列商品引导；False=具体问题，走 RAG。
+        True=开放性意图，应主动列出清单引导；False=具体问题，走 RAG。
     """
     q = _normalize(question)
     if not q:
         return False
 
     # 必须先命中"列举意图"
-    if not any(kw in q for kw in _OPEN_INTENT_KEYWORDS):
+    if not any(kw in q for kw in _open_intent_keywords()):
         return False
 
     # 若带具体型号/品类/属性词，按具体问题处理
-    if any(hint.lower() in q for hint in _SPECIFIC_HINTS):
+    if any(hint.lower() in q for hint in _specific_hints()):
         return False
 
     return True
@@ -102,8 +104,8 @@ def explain(question: str) -> dict:
         }
     """
     q = _normalize(question)
-    matched_kw = next((kw for kw in _OPEN_INTENT_KEYWORDS if kw in q), "")
-    blocked_by = next((h for h in _SPECIFIC_HINTS if h.lower() in q), "")
+    matched_kw = next((kw for kw in _open_intent_keywords() if kw in q), "")
+    blocked_by = next((h for h in _specific_hints() if h.lower() in q), "")
     return {
         "is_open": bool(q) and bool(matched_kw) and not blocked_by,
         "matched_keyword": matched_kw,

@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     # 运行环境：dev=本地开发（宽松自检）；prod=生产部署（严格自检，关键配置缺失直接拒绝启动）
     app_env: str = "dev"
     app_name: str = "KBQA-RAG"
+
+    # 要加载的业务领域（app/domain/<name>/）。
+    #
+    # 为什么放在配置里而不是写死：
+    #   同一套 Core 要能服务电商、财经、医疗等多个领域，
+    #   靠这个开关决定启动时加载哪一个。未选中的领域代码留在磁盘但不导入。
+    #
+    # 默认 generic（通用兜底），方便开发和测试；
+    # 生产环境（APP_ENV=prod）会强制要求显式设置，见下方校验。
+    domain: str = "generic"
     debug: bool = True
     api_prefix: str = "/api/v1"
     # 是否暴露接口文档（/docs）。生产可设为 false 减少信息暴露；演示场景保持 true
@@ -303,6 +313,27 @@ class Settings(BaseSettings):
             self.app_env = "prod"
         if not self.is_prod and not self.secret_key.strip():
             self.secret_key = DEV_FALLBACK_SECRET
+
+        # 领域必须在已知列表内（拼错 domain 名会在这里被拦住，
+        # 而不是等到第一次问答时提示词变空白）。
+        #
+        # 为什么生产环境额外要求「不能是 generic」：
+        #   generic 是兜底领域，提示词刻意保持中性（「你是知识库问答助手」）。
+        #   生产上线后如果忘了设 DOMAIN，回答会变得很泛、质量下降，
+        #   但因为不报错，很可能很久都没人发现。这里强制要求显式指定。
+        self.domain = (self.domain or "").strip().lower()
+        from app.domain import KNOWN_DOMAINS
+
+        if self.domain not in KNOWN_DOMAINS:
+            raise ValueError(
+                f"DOMAIN 配置无效：{self.domain!r}。"
+                f"可选值：{', '.join(KNOWN_DOMAINS)}"
+            )
+        if self.is_prod and self.domain == "generic":
+            raise ValueError(
+                "生产环境（APP_ENV=prod）必须显式指定 DOMAIN，不能使用兜底的 generic。"
+                "请设置为 ecommerce / finance 等具体领域。"
+            )
         return self
 
 

@@ -20,6 +20,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.domain import get_domain
 from app.services import ai_guard
 from app.services.retriever import retrieve
 from app.services.smalltalk import detect_smalltalk
@@ -64,14 +65,27 @@ def hit_to_citation(idx: int, hit: dict) -> dict:
 
 def build_system_prompt(citations: list[dict]) -> str:
     """构造系统提示词：把引用片段按编号嵌入，并规定回答纪律。"""
+    domain = get_domain()
+
     if not citations:
-        return (
-            "你是一个电商商品知识库问答助手。当前知识库中未检索到与问题相关的资料。"
-            "请礼貌地告诉用户：在现有知识库中没有找到相关资料，并建议换个问法或联系人工客服。"
-            "不要编造答案，不要使用任何知识库之外的商品信息。"
+        # 无命中提示语由领域提供：电商说"没找到商品资料"，财经说"没找到财经数据"。
+        # 笼统的"没找到资料"会让用户以为系统坏了。
+        msg = (
+            f"{domain.persona}。当前知识库中未检索到与问题相关的资料。"
+            f"请礼貌地告诉用户：{domain.no_hit_message}，并建议换个问法或联系人工客服。"
         )
+        # 禁令是给模型的约束，不是给用户的话术，所以放在提示语的指令部分，
+        # 并显式标明"这是给你的要求"，避免模型把它念给用户听。
+        if domain.forbidden:
+            constraints = "；".join(domain.forbidden)
+            msg += f"\n（以下是对你的要求，不要念给用户：{constraints}）"
+        return msg
     parts = []
-    parts.append("你是电商商品知识库问答助手。请严格依据下面提供的【本次知识库资料片段】回答用户**当前这个问题**：")
+    # 身份 + 受众来自领域：换领域只改领域模块，这里一个字不用动
+    parts.append(
+        f"{domain.persona}。请严格依据下面提供的【本次知识库资料片段】"
+        f"回答用户**当前这个问题**："
+    )
     parts.append("")
     for c in citations:
         src = f"《{c['doc_name']}》" + (f"（第 {c['page']} 页）" if c.get("page") else "")
@@ -82,9 +96,19 @@ def build_system_prompt(citations: list[dict]) -> str:
     parts.append("1. 优先使用上面片段中的信息作答；片段没提到的，不要猜测或编造。")
     parts.append("2. 回答中引用到哪段资料，就在对应句子末尾标注角标，如 [1][2]，与片段编号一致。")
     parts.append("3. 如果片段不足以完整回答问题，如实说明，并提示用户查看《资料文件名》或咨询人工客服。")
-    parts.append("4. 用简体中文、清晰的分点/表格组织答案，面向普通消费者，专业术语附简短解释。")
-    parts.append("5. 对话历史仅用于理解当前问题中的指代（如“它/那款/这个”指哪个商品）；不要回顾、复述或评价历史话题，更不要提及“历史问题中某某资料没找到”之类与当前问题无关的内容。")
-    parts.append("6. 只针对用户当前这一问作答：历史里问过的其他商品，除非当前问题明确要求对比，否则不要展开说明。")
+    parts.append(
+        f"4. 用简体中文、清晰的分点/表格组织答案，面向{domain.audience}，专业术语附简短解释。"
+    )
+    # 规则 5/6 讲的是"怎么处理对话历史"，属于系统正确性要求，与领域无关。
+    # 原文里写的是"哪个商品"，改成中性的"哪个对象"，换领域后依然成立。
+    parts.append(
+        "5. 对话历史仅用于理解当前问题中的指代（如“它/那款/这个”指哪个对象）；"
+        "不要回顾、复述或评价历史话题，更不要提及“历史问题中某某资料没找到”之类与当前问题无关的内容。"
+    )
+    parts.append(
+        "6. 只针对用户当前这一问作答：历史里问过的其他对象，"
+        "除非当前问题明确要求对比，否则不要展开说明。"
+    )
     return "\n".join(parts)
 
 

@@ -1,15 +1,27 @@
 """开放性意图检测模块单元测试（open_intent.py）。
 
 被测函数：detect_open_intent(question) -> bool
-判定为 True 时，RAG 主流程会在无命中情况下主动列出商品清单。
+
+**这组测试属于电商领域**：用例里的「商品」「S10」「手机」都是电商词。
+判断逻辑本身在 Core（app/services/open_intent.py），
+词表在 app/domain/ecommerce/domain.py —— 所以导出电商项目时，
+这个测试文件会跟着领域一起走。
+
+判定为 True 时，RAG 主流程会在无命中情况下主动列出清单。
+
 
 运行方式（在 backend 目录下）：
-    python -m unittest tests.test_open_intent -v
+    python -m unittest app.domain.ecommerce.tests.test_open_intent -v
 """
 import unittest
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# 本文件测的是**电商领域**的意图识别，所以必须先锁定领域。
+# 如果不锁定，默认会加载 generic（通用兜底），词表里没有「商品」，
+# 这些用例全部会失败 —— 这不是代码坏了，而是测错了领域。
+os.environ.setdefault("DOMAIN", "ecommerce")
 
 from app.services.open_intent import detect_open_intent, explain
 

@@ -40,6 +40,9 @@ def _make_settings(**overrides) -> Settings:
         qdrant_url="http://qdrant:6333",
         llm_mock=False,
         registration_requires_invite=True,
+        # 生产环境必须显式指定领域（不能是兜底的 generic），
+        # 否则 Settings 构造会直接抛 ValidationError。这里给个具体领域。
+        domain="ecommerce",
     )
     base.update(overrides)
     return Settings(**base)

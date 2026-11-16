@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # develop 是日常开发分支，main 只接受从 develop 合并过来的代码。
+    # 两个都要触发，否则在 develop 上开发时 CI 完全不跑，等于没有防护。
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 # 同一分支的新推送取消上一次还在跑的构建，省时间也省额度
 concurrency:
@@ -14,8 +16,17 @@ concurrency:
 jobs:
   # ---------------- 后端：单元测试 ----------------
   backend:
-    name: 后端测试
+    # 按领域矩阵跑：每个领域单独走一遍完整测试。
+    #
+    # 为什么必须这样：领域抽象之后，Core 是共用的、领域是不同的。
+    # 只跑一个领域的话，"finance 领域漏配了某个字段"这类问题
+    # 要等到真正切过去用才会暴露 —— 那时已经在导出项目里了。
+    name: 后端测试 · ${{ matrix.domain }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # 一个领域挂了不要掩盖其他领域的结果
+      matrix:
+        domain: [generic, ecommerce]
     # 起一个真实 PostgreSQL：并发额度测试必须跑在真数据库上才有意义。
     # SQLite 内存库是单连接，并发请求实际是排队的，永远测不出竞态。
     services:
@@ -66,7 +77,13 @@ jobs:
           # 指向上面 services 起的真实 PostgreSQL，让并发额度测试真正执行
           # （不设这一项，那 2 个并发用例会被 skip —— 等于没测）
           KBQA_TEST_PG_URL: "postgresql+asyncpg://kbqa:ci-test-password@127.0.0.1:5432/kbqa_test"
-        run: python -m unittest discover -s tests -t . -v
+          # 当前矩阵领域：决定加载哪套领域配置、以及跑哪套领域专属测试
+          DOMAIN: ${{ matrix.domain }}
+        # 用 run_tests.py 而不是 unittest discover：
+        #   discover 只扫 tests/ 目录，发现不到 app/domain/<name>/tests/ 里的
+        #   领域专属测试 —— 那等于领域测试写了却从不执行。
+        #   run_tests.py 会把两处都纳入。
+        run: python run_tests.py
 
   # ---------------- 前端：类型检查 + 构建 ----------------
   frontend:
