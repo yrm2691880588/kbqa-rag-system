@@ -87,6 +87,7 @@ spec = DomainSpec(
     ),
 
     # ---------- 答案质量与范围（电商：中等严格）----------
+    allowed_tools=("calculator",),
     answer_verify_rounds=1,
     scope_description=(
         "本知识库收录商品参数、使用方法、售后政策、价格信息。"

@@ -106,6 +106,7 @@ spec = DomainSpec(
     #   · 自检 2 次，不合格就打回重做
     #   · 绝不编造数字
     #   · 明确拒答超出范围的问题
+    allowed_tools=("calculator", "date_range"),
     answer_verify_rounds=2,
     scope_description=(
         "本知识库收录财报数据、财务指标、行业研究、监管公告。"

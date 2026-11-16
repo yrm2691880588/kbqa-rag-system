@@ -25,6 +25,7 @@ from app.services import ai_guard
 from app.services.answer_cleanup import strip_thinking_safe
 from app.services.answer_verify import VerifyResult, build_retry_hint, verify_answer
 from app.services.intent_router import Intent, route
+from app.tools.registry import execute_tool, get_schemas, get_tools_for
 from app.services.query_rewrite import rewrite_query
 from app.services.retriever import retrieve
 from app.services.smalltalk import detect_smalltalk
@@ -182,6 +183,129 @@ def _remember(cache_key: str, answer: str, citations: list) -> None:
             ai_guard.question_cache.put(cache_key, {"answer": answer, "citations": citations})
     else:
         ai_guard.llm_breaker.record_failure()
+
+
+async def _run_tool_loop(
+    messages: list[dict],
+    tools: list,
+    llm: AsyncOpenAI,
+    max_rounds: int,
+) -> list[dict]:
+    """执行工具调用循环，返回可以继续用来生成最终答案的 messages。
+
+    ## 流程
+
+        第 1 轮：把工具定义交给模型
+              ↓ 模型返回 tool_calls？
+             否 → 直接把这一轮的回复当答案（它决定不用工具）
+             是 → 执行工具，把结果追加进 messages
+        第 2 轮：带着工具结果再问模型
+              ↓ 还有 tool_calls？
+             有且未超上限 → 继续
+             没有 → 结束，交给外层流式生成最终答案
+
+    ## 为什么返回 messages 而不是直接返回答案
+
+        最终答案是**流式**生成的（边生成边显示）。如果这里也生成一遍，
+        等于生成两次：一次非流式（这里）、一次流式（外层）——
+        既浪费钱，又可能出现两个版本的答案。
+
+        所以这里只负责"把工具执行结果补进对话"，
+        最后让外层用补好的 messages 走流式生成。
+
+    ## 失败处理
+
+        工具执行失败不抛异常：把错误文本交给模型，它会决定
+        是换个参数重试、还是用现有信息回答。
+        整个循环异常也不抛 —— 返回原始 messages，让问答照常进行。
+    """
+    if max_rounds <= 0 or not tools:
+        return messages
+
+    schemas = get_schemas(tools)
+    working = list(messages)
+
+    for round_idx in range(max_rounds):
+        try:
+            resp = await llm.chat.completions.create(
+                model=settings.llm_model,
+                messages=working,
+                tools=schemas,
+                tool_choice="auto",   # 由模型自己决定要不要用
+                temperature=0,        # 工具调用要确定性，避免来回摇摆
+                max_tokens=settings.llm_max_tokens,
+                stream=False,         # 中间轮次不需要流式
+            )
+        except Exception as exc:  # noqa: BLE001
+            # 上游不支持 tools 或临时故障：放弃工具，按普通问答继续
+            logger.warning("工具调用第 %d 轮失败，跳过工具：%s", round_idx + 1, exc)
+            return messages
+
+        if not resp.choices:
+            return working
+
+        msg = resp.choices[0].message
+        tool_calls = getattr(msg, "tool_calls", None)
+
+        # 模型没用工具 → 它认为不需要，结束循环
+        if not tool_calls:
+            return working
+
+        # 把模型的"我要调用工具"这条消息也加进历史
+        # （API 要求 tool 消息之前必须有对应的 assistant tool_calls 消息）
+        working.append(
+            {
+                "role": "assistant",
+                "content": msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+        )
+
+        # 逐个执行工具
+        for tc in tool_calls:
+            name = tc.function.name
+            raw_args = tc.function.arguments or "{}"
+
+            try:
+                args = json.loads(raw_args)
+                if not isinstance(args, dict):
+                    args = {}
+            except json.JSONDecodeError:
+                args = {}
+
+            logger.info("工具调用：%s(%s)", name, raw_args[:120])
+            result_text = await execute_tool(tools, name, args)
+
+            working.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result_text,
+                }
+            )
+
+    # 用完轮数仍有 tool_calls：不再继续，让外层用现有信息作答。
+    # 追加一句提示，告诉模型"不要继续调工具了"。
+    working.append(
+        {
+            "role": "system",
+            "content": (
+                "工具调用次数已达上限。请基于目前已获得的信息直接给出最终答案，"
+                "不要再请求调用工具。如果信息不足，就说明哪些信息不足。"
+            ),
+        }
+    )
+    return working
 
 
 async def _regenerate_with_hint(
@@ -351,6 +475,7 @@ async def stream_answer(
             return
 
         messages = build_messages(question, history, citations)
+
         llm = client or _get_llm_client()
 
         # 熔断闸门：外部服务连续失败到阈值后，这里直接快速失败。
@@ -371,6 +496,26 @@ async def stream_answer(
             return
         # 如果在试探状态，先占一个试探名额（避免冷却一结束就涌进一堆请求）
         ai_guard.llm_breaker.record_trial()
+
+        # ---- 工具调用循环 ----
+        #
+        # ⚠️ 必须放在熔断检查**之后**。
+        #   之前放在前面时，工具循环会绕过熔断直接调模型 ——
+        #   熔断的意义就是"外部服务挂了就别再打它了"，
+        #   绕过它等于熔断失效。这是测试发现的真实缺陷。
+        #
+        # 为什么在流式生成之前做这一轮：
+        #   工具调用是"模型说要调什么 → 程序执行 → 结果塞回去 → 模型再答"，
+        #   中间轮次没有内容给用户看，用非流式最简单可靠。
+        #   只有最终那一轮才走流式输出。
+        domain_tools = get_tools_for(_domain)
+        if domain_tools and settings.tool_max_rounds > 0:
+            messages = await _run_tool_loop(
+                messages=messages,
+                tools=domain_tools,
+                llm=llm,
+                max_rounds=settings.tool_max_rounds,
+            )
 
         call_kwargs = dict(
             model=settings.llm_model,

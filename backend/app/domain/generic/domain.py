@@ -58,6 +58,7 @@ spec = DomainSpec(
     welcome_hint="点击左侧「新对话」开始提问。AI 将依据知识库资料回答，并标注引用来源。",
     example_questions=(),
     # ---------- 答案质量与范围（通用：不额外增加开销）----------
+    allowed_tools=(),
     answer_verify_rounds=0,
     scope_description="",
     out_of_scope_message="",
