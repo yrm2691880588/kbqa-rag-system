@@ -5,6 +5,10 @@
       <div class="brand">
         <el-icon :size="22"><ChatDotRound /></el-icon>
         <span>知识库问答</span>
+        <!-- 当前领域：让人一眼看出现在加载的是哪个领域 -->
+        <span v-if="domain.config.value.display_name" class="brand-domain">
+          {{ domain.config.value.display_name }}
+        </span>
       </div>
 
       <!-- 当前所在的组织：让用户随时知道"我现在在哪家公司的空间里工作" -->
@@ -122,11 +126,13 @@ import {
   WarningFilled,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
+import { useDomain } from '@/stores/domain'
 import { getMyInviteCode, getMyOrg } from '@/api/org'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import BindPhoneDialog from '@/components/BindPhoneDialog.vue'
 
 const auth = useAuthStore()
+const domain = useDomain()
 const router = useRouter()
 const showPasswordDialog = ref(false)
 const showBindPhoneDialog = ref(false)
@@ -430,3 +436,17 @@ async function copyInvite() {
   min-height: 0;
 }
 </style>
+
+// 加载领域文案（顶部要显示领域名）
+onMounted(() => domain.loadDomainConfig().catch(() => {}))
+
+/* 侧边栏品牌区的领域标签：小一号、半透明，不抢主标题的视觉重量 */
+.brand-domain {
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 400;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.18);
+  white-space: nowrap;
+}

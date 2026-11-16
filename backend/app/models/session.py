@@ -17,6 +17,11 @@ class ChatSession(Base):
     title: Mapped[str] = mapped_column(String(100), default="新对话", nullable=False)
     # 检索范围：None=全部知识库；否则为知识库 id 列表（用户提问时可自选单一库）
     kb_scope: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # 所属业务领域。与会话的知识库范围一起决定"这条会话属于哪个领域"。
+    # 切换领域后，列表接口按此过滤，互不干扰。
+    domain: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="generic", server_default="generic", index=True
+    )
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

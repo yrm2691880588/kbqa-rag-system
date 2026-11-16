@@ -24,6 +24,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.deps import AdminUser, CurrentUser, DbSession
 from app.core.tenancy import get_scoped_kb
+from app.domain import get_domain
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.kb import (
@@ -80,7 +81,12 @@ async def list_knowledge_bases(current_user: CurrentUser, db: DbSession, all: bo
     all=1 且为管理员时，可以看到本组织内已停用的库；否则只列启用中的。
     （注意：平台超管也只在"自己的组织"范围内看列表，需要跨组织请用组织管理接口。）
     """
-    stmt = select(KnowledgeBase).order_by(KnowledgeBase.created_at.desc())
+    # 只列出**当前领域**的库：切到财经领域后，电商的库不应出现
+    stmt = (
+        select(KnowledgeBase)
+        .where(KnowledgeBase.domain == get_domain().name)
+        .order_by(KnowledgeBase.created_at.desc())
+    )
     # 租户隔离：列表按组织过滤。
     # ⚠️ org_id 为 None 时必须显式返回空，不能依赖 `== None` ——
     # SQLAlchemy 会把它渲染成 `org_id IS NULL`，反而把"无归属的历史库"暴露出来。
@@ -100,7 +106,8 @@ async def create_knowledge_base(payload: KBCreate, db: DbSession, admin: AdminUs
     # 重名检查限定在"本组织内"：不同客户各有一个「产品手册」是完全正常的
     exists = await db.scalar(
         select(KnowledgeBase).where(
-            KnowledgeBase.org_id == org_id, KnowledgeBase.name == payload.name
+            KnowledgeBase.org_id == org_id, KnowledgeBase.name == payload.name,
+            KnowledgeBase.domain == get_domain().name
         )
     )
     if exists:
@@ -110,6 +117,8 @@ async def create_knowledge_base(payload: KBCreate, db: DbSession, admin: AdminUs
         description=payload.description,
         created_by=admin.id,
         org_id=org_id,
+        # 记下创建时所属的领域：切到别的领域后，这个库就不该再出现
+        domain=get_domain().name,
     )
     db.add(kb)
     await db.commit()

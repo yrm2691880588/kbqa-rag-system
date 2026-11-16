@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select, or_
 
 from app.core.deps import CurrentUser, DbSession
+from app.domain import get_domain
 from app.core.tenancy import resolve_kb_scope
 from app.models.message import Message
 from app.models.session import ChatSession
@@ -51,7 +52,11 @@ async def list_sessions(
     stmt = (
         select(ChatSession, func.count(Message.id).label("msg_count"))
         .outerjoin(Message, Message.session_id == ChatSession.id)
-        .where(ChatSession.user_id == current_user.id)
+        .where(
+            ChatSession.user_id == current_user.id,
+            # 只列出当前领域的会话：切到财经后，电商的历史会话不应出现
+            ChatSession.domain == get_domain().name,
+        )
         .group_by(ChatSession.id)
         .order_by(ChatSession.updated_at.desc())
     )
@@ -102,7 +107,13 @@ async def create_session(payload: SessionCreate, current_user: CurrentUser, db: 
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "所选知识库不存在或无权访问")
         kb_scope = resolved
 
-    s = ChatSession(user_id=current_user.id, title="新对话", kb_scope=kb_scope)
+    s = ChatSession(
+        user_id=current_user.id,
+        title="新对话",
+        kb_scope=kb_scope,
+        # 记下创建时所属的领域：切到别的领域后，这条会话不再出现
+        domain=get_domain().name,
+    )
     db.add(s)
     await db.commit()
     await db.refresh(s)

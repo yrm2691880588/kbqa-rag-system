@@ -367,6 +367,8 @@ async def _build_guided_listing(db, kb_ids: list[int] | None, org_id: int | None
 
     base_kb = select(KnowledgeBase).where(
         KnowledgeBase.is_active.is_(True),
+        # 只列当前领域的库
+        KnowledgeBase.domain == get_domain().name,
         # 租户隔离兜底：无论 kb_ids 传什么，都只在本组织范围内列
         KnowledgeBase.org_id == org_id,
     )

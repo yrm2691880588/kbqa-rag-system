@@ -43,6 +43,18 @@ export async function loadDomainConfig(): Promise<DomainConfigShape> {
   const d = await loader.load()
   config.value = d
   loaded.value = loader.isLoaded()
+
+  // 写给路由守卫用（浏览器标签要显示领域名）。
+  // 走 window 而不是让 router 引 store：路由守卫可能在 app 挂载前执行，
+  // 那时 store 还没初始化；直接读一个模块级变量最稳，也没有循环依赖。
+  if (loader.isLoaded() && typeof window !== 'undefined') {
+    ;(window as unknown as { __dsh_domain__?: string }).__dsh_domain__ =
+      d.display_name || ''
+    // 立即刷新一次标签，不用等下次路由跳转
+    const pageTitle = (document.title.split(' · ').pop() || '知识库问答').trim()
+    document.title = d.display_name ? `${d.display_name} · ${pageTitle}` : pageTitle
+  }
+
   return d
 }
 
