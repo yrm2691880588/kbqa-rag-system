@@ -78,12 +78,35 @@ def main() -> int:
         print(f"领域专属测试   : {dom.countTestCases()} 个")
         return 0
 
-    suite = unittest.TestSuite([core, dom])
-    total = suite.countTestCases()
+    total = core.countTestCases() + dom.countTestCases()
     print(f"=== 领域：{domain} | 共 {total} 个用例 ===", flush=True)
 
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
-    return 0 if result.wasSuccessful() else 1
+    # ⚠️ 必须**分两批依次执行**，不能拼成一个 suite。
+    #
+    # 为什么（导出验证时真实踩到过）：
+    #   Core 测试的模块名是 tests.test_xxx，
+    #   领域测试的模块名是 app.domain.tests.test_xxx。
+    #   把两者放进同一个 TestSuite 时，unittest 内部按模块名做导入缓存，
+    #   会出现 "Failed to import test module: tests.test_xxx" 的批量报错
+    #   （实测 87 个错误），但**单独跑任何一批都全过** ——
+    #   典型的"一起跑就坏"的隐形 bug，非常难查。
+    #
+    #   分批执行各自独立，互不干扰。
+    runner = unittest.TextTestRunner(verbosity=2)
+
+    NL = chr(10)  # 避免在源码里写转义换行（本项目已因这个错误反复踩坑）
+
+    print(NL + f"--- Core 通用测试（{core.countTestCases()} 个）---", flush=True)
+    r1 = runner.run(core)
+
+    print(NL + f"--- {domain} 领域测试（{dom.countTestCases()} 个）---", flush=True)
+    r2 = runner.run(dom)
+
+    ok = r1.wasSuccessful() and r2.wasSuccessful()
+    core_state = "OK" if r1.wasSuccessful() else "FAILED"
+    dom_state = "OK" if r2.wasSuccessful() else "FAILED"
+    print(NL + f"=== 汇总：Core {core_state} | 领域 {dom_state} ===")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
