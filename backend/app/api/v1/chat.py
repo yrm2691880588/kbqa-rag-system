@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.core.deps import CurrentUser, DbSession
 from app.core.tenancy import resolve_kb_scope
 from app.db.session import AsyncSessionLocal
+from app.domain import get_domain
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase
 from app.models.message import Message

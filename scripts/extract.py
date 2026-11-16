@@ -636,8 +636,56 @@ def _clean_one_line(line: str) -> str:
 
 
 
+def _pin_ci_matrix(out_root: Path, name: str) -> None:
+    """把导出产物的 CI 矩阵改成单领域。
+
+    为什么必须改（实测踩到的坑）：
+        母项目 CI 是 `domain: [generic, ecommerce, finance]` 三领域矩阵。
+        导出项目里只有**一个**领域，另外两个的目录根本不存在 ——
+        保持原样的话，产物的 CI 一定跑红。
+        使用者第一次 push 就看到一片红，会以为项目是坏的。
+
+    修法：把 domain 那行的列表替换成只剩本领域。
+    用逐行处理而不是正则，避免转义问题（本项目已被转义坑过多次）。
+    """
+    ci = out_root / ".github" / "workflows" / "ci.yml"
+    if not ci.exists():
+        return
+
+    raw = ci.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+
+    LF = chr(10)
+    CRLF = chr(13) + chr(10)
+    had_crlf = CRLF in text
+    lines = text.replace(CRLF, LF).split(LF)
+
+    out = []
+    for ln in lines:
+        stripped = ln.strip()
+        # 匹配 "domain: [...]" 这一行（可能带缩进）
+        if stripped.startswith("domain:") and "[" in stripped:
+            indent = ln[: len(ln) - len(ln.lstrip())]
+            out.append(f"{indent}domain: [{name}]")
+        else:
+            out.append(ln)
+
+    result = LF.join(out)
+    if had_crlf:
+        result = result.replace(LF, CRLF)
+    ci.write_bytes(result.encode("utf-8"))
+
+
 def _write_domain_samples(domain_dir: Path, out_root: Path, copied: list[Path]) -> None:
-    """把领域样例资料复制到产物根目录的 samples/。"""
+    """把领域样例资料复制到产物根目录的 samples/。
+
+    目录来源用 `DomainSpec.samples_dir()` 而不是自己拼路径 ——
+    保证"样例资料在哪"只有一处定义（领域协议），
+    避免导出脚本与协议各算一遍、日后改了一处漏另一处。
+    """
     src = domain_dir / "samples"
     dst = out_root / "samples"
     if src.is_dir() and any(src.iterdir()):
@@ -928,6 +976,7 @@ def main() -> int:
     _fix_domain_imports(out_backend, created)
     _pin_domain_config(out_backend, name)
     _pin_run_tests_domain(out_backend, name)
+    _pin_ci_matrix(out_root, name)
     n_cleaned = _clean_foreign_mentions(out_backend)
     if n_cleaned:
         print(f"[清理] {n_cleaned} 个文件里的其他领域举例已中性化")

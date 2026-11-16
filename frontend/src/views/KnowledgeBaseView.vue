@@ -155,7 +155,7 @@
     <el-dialog v-model="kbDialog.visible" :title="kbDialog.isEdit ? '编辑知识库' : '新建知识库'" width="440px">
       <el-form label-width="70px">
         <el-form-item label="名称" required>
-          <el-input v-model="kbDialog.name" :disabled="kbDialog.isEdit" maxlength="100" placeholder="如：手机商品库" />
+          <el-input v-model="kbDialog.name" :disabled="kbDialog.isEdit" maxlength="100" placeholder="如：产品资料库" />
         </el-form-item>
         <el-form-item label="简介">
           <el-input v-model="kbDialog.description" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="这个库放什么资料，方便以后识别" />
