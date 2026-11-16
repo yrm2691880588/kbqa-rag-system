@@ -6,11 +6,10 @@
       <div class="brand-logo">
         <el-icon :size="26"><ChatDotRound /></el-icon>
       </div>
-      <h1 class="brand-title">知识库问答系统</h1>
-      <p class="brand-desc">
-        把商品资料、售后政策、内部文档交给它，<br />
-        用自然语言提问，得到带出处的答案。
-      </p>
+      <!-- 标题与口号来自后端领域配置：导出财经项目后自动变成财经的文案，
+           前端不需要改代码，也不需要重新构建 -->
+      <h1 class="brand-title">{{ domain.config.value.app_title }}</h1>
+      <p class="brand-desc">{{ domain.config.value.login_slogan }}</p>
       <ul class="brand-points">
         <li>
           <el-icon><Search /></el-icon>
@@ -170,6 +169,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useDomain } from '@/stores/domain'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { User, Lock, Iphone, Message, Search, Document, ChatDotRound } from '@element-plus/icons-vue'
@@ -178,6 +178,7 @@ import * as authApi from '@/api/auth'
 
 const auth = useAuthStore()
 const router = useRouter()
+const domain = useDomain()
 const route = useRoute()
 
 const tab = ref<'password' | 'sms'>('password')
@@ -399,6 +400,8 @@ async function submitForgot() {
 }
 
 onMounted(() => {
+  // 登录页要先拿到领域文案再显示标题，否则会闪一下默认值
+  domain.loadDomainConfig().catch(() => {})
   // 预加载一张图形验证码（切到手机号登录就能直接用）
   loadCaptcha()
 })

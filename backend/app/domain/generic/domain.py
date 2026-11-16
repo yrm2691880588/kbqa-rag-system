@@ -51,6 +51,12 @@ spec = DomainSpec(
         "不要编造答案，不要使用任何知识库之外的资料",
     ),
     no_hit_message="在现有知识库中没有找到相关资料",
+    # ---------- 界面文案（中性表述，不绑定行业）----------
+    app_title="知识库问答系统",
+    login_slogan="把文档交给它，用自然语言提问，得到带出处的答案",
+    welcome_title="知识库智能问答",
+    welcome_hint="点击左侧「新对话」开始提问。AI 将依据知识库资料回答，并标注引用来源。",
+    example_questions=(),
     open_intent_keywords=OPEN_INTENT_KEYWORDS,
     specific_hints=SPECIFIC_HINTS,
     # 通用领域不知道用户是什么行业，但电商/财经是最常见的两类，

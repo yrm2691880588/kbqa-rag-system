@@ -357,7 +357,7 @@ async def _build_guided_listing(db, kb_ids: list[int] | None, org_id: int | None
     no_kb_text = (
         "目前系统里还没有可用的知识库。"
         "你可以请管理员先去「知识库管理」里创建一个，"
-        "然后把商品资料上传进去，再回来提问效果会更好。"
+        "然后把资料上传进去，再回来提问效果会更好。"
     )
 
     # 明确无权访问任何库：直接给出提示，不查询、绝不退化成"查全部"
@@ -376,12 +376,23 @@ async def _build_guided_listing(db, kb_ids: list[int] | None, org_id: int | None
     if not kbs:
         return no_kb_text
 
+    domain = get_domain()
     lines: list[str] = []
-    lines.append(
-        "您好！您的问题比较宽泛，系统里没有能直接回答的单一文档。"
-        "目前知识库里已收录以下内容，您可以挑一个具体的问题来问，例如：\n"
-        "  • 「A8 适用多大面积」「S10 电池容量是多少」「耳机支持防水吗」之类。\n"
-    )
+    # 示例问题必须来自领域配置：
+    #   写死成电商问题（A8/S10/耳机），在财经项目里会完全跑题。
+    #   领域没配示例问题时不带举例。
+    if domain.example_questions:
+        examples = "」「".join(domain.example_questions)
+        lines.append(
+            "您好！您的问题比较宽泛，系统里没有能直接回答的单一文档。"
+            "目前知识库里已收录以下内容，您可以挑一个具体的问题来问，例如：\n"
+            f"  • 「{examples}」之类。\n"
+        )
+    else:
+        lines.append(
+            "您好！您的问题比较宽泛，系统里没有能直接回答的单一文档。"
+            "目前知识库里已收录以下内容，您可以挑一个具体的问题来问。\n"
+        )
     for kb in kbs:
         kb_title = f"【{kb.name}】"
         if kb.description:

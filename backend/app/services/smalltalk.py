@@ -30,16 +30,29 @@ _STRIP_RE = re.compile(r"[\s，。！？、,.!?~～;；:'\"“”‘’()（）�
 # 剥离后剩余的"语气词/无意义字"，允许残留
 _TRIVIAL_TAIL = set("啊呀哦喔嗯呢吧嘛哈嘿哟了唉哎")
 
-_MSG_GREET = (
-    "您好！我是本企业知识库问答助手，可以帮您回答商品资料相关的问题"
-    "（如产品参数、功能、价格、使用方法等）。请直接告诉我您想了解什么，"
-    "我会从知识库中查找并给出带引用出处的回答。"
+# 寒暄文案由领域提供（见 app/domain/<name>/domain.py 的 greet_message / whoami_message）。
+# 原来这些句子写死在本文件里，且都带"商品资料"字样 ——
+# 导出财经项目后，用户说"你好"，系统会回答"可以帮您回答商品资料相关问题"，
+# 完全答非所问。这类用户可见文案必须领域化。
+def _domain_msg(field: str, fallback: str) -> str:
+    """取领域的寒暄文案，未配置时用通用兜底。"""
+    try:
+        from app.domain import get_domain
+
+        return getattr(get_domain(), field, "") or fallback
+    except Exception:  # noqa: BLE001 - 领域加载异常不应让寒暄功能整体失效
+        return fallback
+
+
+_MSG_GREET_FALLBACK = (
+    "您好！我是知识库问答助手，可以帮您回答知识库资料相关的问题。"
+    "请直接告诉我您想了解什么，我会从知识库中查找并给出带引用出处的回答。"
 )
 _MSG_THANKS = "不客气！有什么想了解的随时问我。"
 _MSG_BYE = "再见，期待下次为您服务！"
-_MSG_WHOAMI = (
-    "我是知识库问答助手，专门回答本企业商品资料的问题，比如产品规格、"
-    "使用说明、常见问题等。您想问什么？我会从知识库里找到答案，并标注引用来源。"
+_MSG_WHOAMI_FALLBACK = (
+    "我是知识库问答助手，专门回答知识库里资料相关的问题。"
+    "您想问什么？我会从知识库里找到答案，并标注引用来源。"
 )
 
 # 身份/能力类询问词条（**必须是"你/自己"作主语的完整短语**，禁止裸词如"介绍""有什么功能"
@@ -88,7 +101,7 @@ def detect_smalltalk(question: str) -> str | None:
         for w in sorted(_WHOAMI_WORDS, key=len, reverse=True):
             rest = rest.replace(w, "")
         if not rest or all(ch in _TRIVIAL_TAIL for ch in rest):
-            return _MSG_WHOAMI
+            return _domain_msg("whoami_message", _MSG_WHOAMI_FALLBACK)
 
     # 关键词剥离法：把寒暄词全部剥掉，看剩什么
     rest = q
@@ -109,6 +122,6 @@ def detect_smalltalk(question: str) -> str | None:
             return _MSG_THANKS
         if any(w in q for w in _BYE_WORDS):
             return _MSG_BYE
-        return _MSG_GREET
+        return _domain_msg("greet_message", _MSG_GREET_FALLBACK)
 
     return None

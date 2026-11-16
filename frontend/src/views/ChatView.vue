@@ -64,8 +64,8 @@
     <!-- ════════ 右：对话主区 ════════ -->
     <main class="main">
       <div v-if="!currentSession" class="welcome">
-        <h2>商品知识库智能问答</h2>
-        <p>点击左侧「新对话」开始提问。AI 将依据知识库资料回答，并标注引用来源。</p>
+        <h2>{{ domain.config.value.welcome_title }}</h2>
+        <p>{{ domain.config.value.welcome_hint }}</p>
         <div class="tips">
           <div class="tip-card" v-for="(t, i) in demoQuestions" :key="i" @click="quickAsk(t)">
             {{ t }}
@@ -240,6 +240,7 @@ import {
   streamChat, type ChatMessage, type ChatSession, type Citation,
 } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
+import { useDomain } from '@/stores/domain'
 import {
   createTypingMessage,
   createUserMessage,
@@ -251,6 +252,7 @@ import { renderAnswer } from '@/utils/answerRender'
 import FeedbackDialog from '@/components/chat/FeedbackDialog.vue'
 
 const auth = useAuthStore()
+const domain = useDomain()
 
 /** 原因 key -> 中文标签（与后端 FEEDBACK_REASONS 一致） */
 const REASON_LABELS: Record<string, string> = {
@@ -286,12 +288,9 @@ let abortCtrl: AbortController | null = null
 const msgListRef = ref<HTMLElement>()
 const bottomAnchor = ref<HTMLElement>()
 
-const demoQuestions = [
-  '星跃S10手机的电池容量和快充是多少？',
-  '星翼蓝牙耳机支持防水吗？',
-  '星耀空气净化器A8适用多大面积？',
-  '星翼智能手表能带着游泳吗？',
-]
+// 示例问题来自领域配置（电商是手机参数，财经是财报指标）。
+// 原来写死成电商问题，导出财经项目后点开就是一串手机型号，完全跑题。
+const demoQuestions = computed(() => domain.config.value.example_questions)
 
 /** 顶部栏显示的检索范围标签 */
 const scopeKbLabel = computed<string>(() => {
@@ -302,7 +301,9 @@ const scopeKbLabel = computed<string>(() => {
 
 const placeholder = computed(() => (sending.value ? 'AI 正在回答中…' : `向 ${scopeName.value} 提问…`))
 const scopeName = computed(() => {
-  if (!currentSession.value) return '商品知识库'
+  if (!currentSession.value) return domain.config.value.display_name
+    ? `${domain.config.value.display_name}知识库`
+    : '知识库'
   const scope = currentSession.value.kb_scope
   if (!scope || !scope.length) return '全部知识库'
   const kb = activeKbs.value.find((k) => k.id === scope[0])
@@ -311,6 +312,8 @@ const scopeName = computed(() => {
 
 // ---------------- 生命周期 ----------------
 onMounted(async () => {
+  // 先拿领域文案（标题、示例问题）。失败不阻塞：store 里有中性兜底。
+  domain.loadDomainConfig().catch(() => {})
   try {
     activeKbs.value = (await listKBs(false)).data
   } catch { /* 忽略 */ }
