@@ -244,12 +244,24 @@ class DateRangeTool:
 
     name = "date_range"
 
-    description = (
-        "把相对时间表达解析成具体日期。"
-        "**当你需要确认「去年Q3」「今年Q2」「最近三年」具体指哪段时间时必须使用**，"
-        "不要自己推算年份 —— 财务数据差一年就全错。"
-        f"今天的日期是 {{today}}。"
-    )
+    @property
+    def description(self) -> str:
+        """工具说明。
+
+        ⚠️ 用 property 而不是类属性，因为要动态拼今天的日期。
+        之前写成 `f"今天的日期是 {{today}}。"` —— 转义写错了，
+        模型看到的字面就是 `{today}`，等于没告诉它今天几号。
+        工具描述里带动态内容时，不要用类属性 + f-string 转义，
+        直接用 property 最不容易出错。
+        """
+        today = date.today().isoformat()
+        return (
+            "把相对时间表达解析成具体日期。"
+            "**当问题里出现「去年Q3」「今年Q2」「上个月」「最近三年」"
+            "这类相对时间时，必须先调用本工具确认具体日期范围**，"
+            "不要自己推算 —— 财务数据差一年就全错。"
+            f"今天的日期是 {today}。"
+        )
 
     parameters = {
         "type": "object",

@@ -234,5 +234,83 @@ class ExecuteToolTestCase(unittest.TestCase):
         self.assertTrue(r)
 
 
+class ToolDescriptionTestCase(unittest.TestCase):
+    """工具描述本身也是被测对象。
+
+    ## 为什么描述值得单独测
+
+    工具描述是模型决策的**唯一依据**。它写得好不好，
+    直接决定"该调用时会不会调用"。
+
+    实测踩过两个坑：
+      1. date_range 的描述里 `{today}` 没被替换（转义写错），
+         模型看到的字面就是 `{today}`，等于没告诉它今天几号。
+      2. calculator 的描述原来写"只在确实需要时使用"、
+         "如果资料里有就不要调用" —— 太保守，模型对
+         「Q3 比 Q2 增长多少」也不调用，而是抄资料里现成的比率。
+    """
+
+    def test_date_range_description_has_real_date(self):
+        """描述里必须出现具体日期，不能是 {today} 这种占位符。"""
+        d = DateRangeTool()
+        desc = d.description
+
+        self.assertNotIn(
+            "{today}", desc,
+            "描述里还有未替换的 {today} 占位符 —— 模型不知道今天是几号",
+        )
+        # 应该含一个形如 2026-11-16 的真实日期
+        import re
+
+        self.assertRegex(
+            desc, r"\d{4}-\d{2}-\d{2}",
+            "描述里没有具体日期",
+        )
+
+    def test_calculator_description_has_explicit_trigger(self):
+        """描述里要有明确的"什么时候必须调用"的表述。"""
+        d = CalculatorTool()
+        desc = d.description
+
+        self.assertIn("必须调用", desc, "缺少'必须调用'的明确要求")
+        self.assertIn("增长率", desc, "没提到增长率的场景")
+        self.assertIn("不要调用", desc, "缺少'什么时候不要调用'的说明")
+
+    def test_calculator_description_not_over_conservative(self):
+        """描述不能是"能不调就不调"的措辞。
+
+        实测发现"只在你确实需要时使用"这种写法会让模型过度保守。
+        """
+        d = CalculatorTool()
+        desc = d.description
+
+        # 不应该出现纯劝退的措辞
+        for bad in ("只有在万不得已", "尽量不要调用", "非必要不调用"):
+            self.assertNotIn(bad, desc, f"描述过于保守：{bad}")
+
+    def test_all_tools_have_description(self):
+        """每个工具都必须有非空描述，否则模型不会用。"""
+        from app.tools.calculator import CalculatorTool as CT
+        from app.tools.date_range import DateRangeTool as DT
+
+        for tool in (CT(), DT()):
+            self.assertTrue(tool.description, f"{tool.name} 缺少描述")
+            self.assertGreater(
+                len(tool.description), 20,
+                f"{tool.name} 的描述太短，模型难以判断何时使用",
+            )
+
+    def test_all_tools_have_schema(self):
+        """每个工具必须有合法 JSON Schema。"""
+        from app.tools.calculator import CalculatorTool as CT
+        from app.tools.date_range import DateRangeTool as DT
+
+        for tool in (CT(), DT()):
+            p = tool.parameters
+            self.assertEqual(p.get("type"), "object")
+            self.assertIn("properties", p)
+            self.assertTrue(p.get("required"), f"{tool.name} 没有必填参数")
+
+
 if __name__ == "__main__":
     unittest.main()
