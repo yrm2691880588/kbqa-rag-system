@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false   # 一个领域挂了不要掩盖其他领域的结果
       matrix:
-        domain: [generic, ecommerce]
+        domain: [generic, ecommerce, finance]
     # 起一个真实 PostgreSQL：并发额度测试必须跑在真数据库上才有意义。
     # SQLite 内存库是单连接，并发请求实际是排队的，永远测不出竞态。
     services:

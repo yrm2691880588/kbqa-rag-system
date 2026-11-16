@@ -53,4 +53,12 @@ spec = DomainSpec(
     no_hit_message="在现有知识库中没有找到相关资料",
     open_intent_keywords=OPEN_INTENT_KEYWORDS,
     specific_hints=SPECIFIC_HINTS,
+    # 通用领域不知道用户是什么行业，但电商/财经是最常见的两类，
+    # 填进去能挡住大部分跨领域误判。
+    foreign_hints=(
+        # 电商
+        "商品", "本商品", "手机", "耳机", "手表", "保修", "售后",
+        # 财经
+        "股票", "基金", "市盈率", "股价", "财报", "投资",
+    ),
 )

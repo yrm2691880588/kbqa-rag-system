@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 
 from app.domain.base import DomainSpec
 
@@ -94,9 +95,24 @@ def get_domain() -> DomainSpec:
     """
     global _loaded
     if _loaded is None:
-        from app.core.config import settings
+        # 注意：这里直接读环境变量而不是 settings.domain。
+        #
+        # 为什么：settings 是 pydantic-settings 的单例，只在**首次导入**时
+        # 读一次环境变量；之后改 os.environ["DOMAIN"] 不会反映到 settings 上。
+        # 测试需要在同一进程内切换领域来验证隔离，读 settings 就做不到
+        # （改了环境变量还是加载旧领域，测试会"假通过"）。
+        #
+        # 生产环境不受影响：settings 在启动时由同一个环境变量构造，
+        # 两者值一致，且运行期不会变。
+        raw = os.environ.get("DOMAIN", "").strip().lower()
+        if raw:
+            name = raw
+        else:
+            from app.core.config import settings
 
-        _loaded = load_domain(settings.domain)
+            name = settings.domain
+
+        _loaded = load_domain(name)
     return _loaded
 
 

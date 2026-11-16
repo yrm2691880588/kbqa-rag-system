@@ -56,6 +56,13 @@ def _specific_hints() -> tuple[str, ...]:
     return get_domain().specific_hints
 
 
+def _foreign_hints() -> tuple[str, ...]:
+    """别的领域的典型词（出现在本领域说明用户多半问错了库）。"""
+    from app.domain import get_domain
+
+    return get_domain().foreign_hints
+
+
 
 def _normalize(question: str) -> str:
     """归一化：小写 + 去前后空白。"""
@@ -90,6 +97,12 @@ def detect_open_intent(question: str) -> bool:
     if any(hint.lower() in q for hint in _specific_hints()):
         return False
 
+    # 若带**别的领域**的典型词，也按具体问题处理。
+    # 例：财经领域里问「介绍一下本商品」—— 词表没有"本商品"，
+    # 但 foreign_hints 里有"商品"，据此拦住，避免列出一份股票清单。
+    if any(hint.lower() in q for hint in _foreign_hints()):
+        return False
+
     return True
 
 
@@ -106,8 +119,10 @@ def explain(question: str) -> dict:
     q = _normalize(question)
     matched_kw = next((kw for kw in _open_intent_keywords() if kw in q), "")
     blocked_by = next((h for h in _specific_hints() if h.lower() in q), "")
+    blocked_by_foreign = next((h for h in _foreign_hints() if h.lower() in q), "")
     return {
-        "is_open": bool(q) and bool(matched_kw) and not blocked_by,
+        "is_open": bool(q) and bool(matched_kw) and not blocked_by and not blocked_by_foreign,
         "matched_keyword": matched_kw,
         "blocked_by_hint": blocked_by,
+        "blocked_by_foreign": blocked_by_foreign,
     }
