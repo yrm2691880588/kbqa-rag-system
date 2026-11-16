@@ -23,12 +23,11 @@ from app.core.config import settings
 from app.domain import get_domain
 from app.services import ai_guard
 from app.services.answer_cleanup import strip_thinking_safe
-from app.services.answer_verify import VerifyResult, build_retry_hint, verify_answer
+from app.services.answer_verify import build_retry_hint, verify_answer
 from app.services.intent_router import Intent, route
 from app.tools.registry import execute_tool, get_schemas, get_tools_for
 from app.services.query_rewrite import rewrite_query
 from app.services.retriever import retrieve
-from app.services.smalltalk import detect_smalltalk
 
 logger = logging.getLogger("kbqa.rag")
 
@@ -427,6 +426,30 @@ async def stream_answer(
             return
 
     try:
+        # 熔断闸门：外部服务连续失败到阈值后，这里直接快速失败。
+        #
+        # ⚠️ 位置很关键：必须放在**所有模型调用之前**。
+        #    之前放在问题改写之后，导致上游故障时改写仍会先打一次请求，
+        #    熔断的保护打了折扣（改写、自检、重做都会穿透）。
+        #
+        # 为什么要"快速失败"：外部接口坏了的时候，每个请求都干等 120 秒才报错，
+        # 工作线程会迅速被占满 —— 结果是"大模型挂了"变成"我们网站也打不开了"。
+        # 跳闸期间立刻回一句"稍后再试"，至少网站本身还能正常打开。
+        if not ai_guard.llm_breaker.allow():
+            logger.warning("熔断器处于跳闸状态，本次请求快速失败（不调用大模型）")
+            yield ("error", {
+                "message": "问答服务暂时繁忙，请稍后重试。",
+                "reason": "circuit_open",
+            })
+            yield ("done", {
+                "latency_ms": int((time.time() - started) * 1000),
+                "citations": citations,
+                "has_answer": False,
+            })
+            return
+        # 如果在试探状态，先占一个试探名额（避免冷却一结束就涌进一堆请求）
+        ai_guard.llm_breaker.record_trial()
+
         # 0.9) 多轮问题改写
         #
         # 为什么要在检索之前做：
@@ -478,24 +501,6 @@ async def stream_answer(
 
         llm = client or _get_llm_client()
 
-        # 熔断闸门：外部服务连续失败到阈值后，这里直接快速失败。
-        # 为什么要"快速失败"：外部接口坏了的时候，每个请求都干等 120 秒才报错，
-        # 工作线程会迅速被占满 —— 结果是"大模型挂了"变成"我们网站也打不开了"。
-        # 跳闸期间立刻回一句"稍后再试"，至少网站本身还能正常打开。
-        if not ai_guard.llm_breaker.allow():
-            logger.warning("熔断器处于跳闸状态，本次请求快速失败（不调用大模型）")
-            yield ("error", {
-                "message": "问答服务暂时繁忙，请稍后重试。",
-                "reason": "circuit_open",
-            })
-            yield ("done", {
-                "latency_ms": int((time.time() - started) * 1000),
-                "citations": citations,
-                "has_answer": False,
-            })
-            return
-        # 如果在试探状态，先占一个试探名额（避免冷却一结束就涌进一堆请求）
-        ai_guard.llm_breaker.record_trial()
 
         # ---- 工具调用循环 ----
         #
@@ -609,7 +614,14 @@ async def stream_answer(
         #   发现问题时追加一条更正消息，而不是假装没发生。
         full_answer = "".join(answer_parts)
 
-        if _domain.answer_verify_rounds > 0 and citations and full_answer.strip():
+        # 自检前再检查一次熔断：整轮问答可能耗时很久，
+        # 期间上游可能已经跳闸。不检查的话会继续打请求，进一步压垮上游。
+        if (
+            _domain.answer_verify_rounds > 0
+            and citations
+            and full_answer.strip()
+            and ai_guard.llm_breaker.allow()
+        ):
             # ------------------------------------------------------------
             # 自检 + 打回重做循环
             #

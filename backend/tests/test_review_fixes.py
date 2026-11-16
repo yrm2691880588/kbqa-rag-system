@@ -28,6 +28,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from tests.domain_guard import require_domain
 from app.domain import load_domain
 from app.services.answer_verify import build_retry_hint
 from app.services.intent_router import Intent, route
@@ -68,7 +69,7 @@ class OutOfScopeTestCase(unittest.TestCase):
     """超范围判断：要拦住明显的，但绝不能误伤业务问题。"""
 
     def setUp(self):
-        self.domain = load_domain("finance")
+        self.domain = require_domain("finance")
 
     def test_obvious_off_topic_blocked(self):
         """明显无关的问题应该被拦。"""

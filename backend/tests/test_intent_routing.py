@@ -24,6 +24,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from tests.domain_guard import require_domain
 from app.domain import get_domain, load_domain
 from app.services.intent_router import Intent, route
 
@@ -65,7 +66,7 @@ class RealtimeRoutingTestCase(unittest.TestCase):
 
     def test_stock_price_is_handled(self):
         """股价既涉及实时数据也涉及禁令，两类拦截都接受。"""
-        d = load_domain("finance")
+        d = require_domain("finance")
         r = route("茅台现在股价多少", d)
         self.assertIn(
             r.intent, (Intent.NEED_EXTERNAL, Intent.BLOCKED),
@@ -77,7 +78,7 @@ class ForbiddenRoutingTestCase(unittest.TestCase):
     """违反领域禁令的问题必须拒答。"""
 
     def test_predict_price_blocked(self):
-        d = load_domain("finance")
+        d = require_domain("finance")
         for q in ("帮我预测下茅台股价", "预测一下明天涨跌", "该买哪只股票", "推荐一只股票"):
             r = route(q, d)
             self.assertEqual(
@@ -87,7 +88,7 @@ class ForbiddenRoutingTestCase(unittest.TestCase):
 
     def test_no_forbidden_means_no_block(self):
         """没配禁令的领域不该因为这套规则误拦。"""
-        d = load_domain("generic")
+        d = require_domain("generic")
         r = route("帮我预测下明天的销量", d)
         self.assertNotEqual(r.intent, Intent.BLOCKED)
 
@@ -96,7 +97,7 @@ class KnowledgeRoutingTestCase(unittest.TestCase):
     """正常业务问题必须放行 —— 这是最容易误伤的地方。"""
 
     def test_normal_questions_pass(self):
-        d = load_domain("finance")
+        d = require_domain("finance")
         cases = [
             "海联银行2025年的净利润是多少",
             "启明科技的毛利率怎么样",
@@ -151,21 +152,21 @@ class DomainConfigTestCase(unittest.TestCase):
         self.assertEqual(spec.answer_verify_rounds, 0)
 
     def test_finance_has_verify_enabled(self):
-        d = load_domain("finance")
+        d = require_domain("finance")
         self.assertGreater(
             d.answer_verify_rounds, 0,
             "财经领域答错代价高，应该开启自检",
         )
 
     def test_finance_disallows_external_facts(self):
-        d = load_domain("finance")
+        d = require_domain("finance")
         self.assertFalse(
             d.allow_external_facts,
             "财经领域绝不允许模型用通用知识补充（会编数字）",
         )
 
     def test_generic_has_no_verify(self):
-        d = load_domain("generic")
+        d = require_domain("generic")
         self.assertEqual(d.answer_verify_rounds, 0, "通用领域不该额外增加调用成本")
 
 

@@ -64,6 +64,17 @@ async def init_db(eng=None, session_factory=None) -> None:
 # --------------------------------------------------------------------------- 结构迁移
 
 
+def _is_postgres(sync_conn) -> bool:
+    """当前连接是不是 PostgreSQL。
+
+    为什么要抽出来（原来三处各写一遍 `sync_conn.dialect.name == "postgresql"`）：
+      · 改判定逻辑时要改三处，漏一处就是"某个分支在 PG 上永远不执行"
+      · SQLite 与 PG 在 information_schema / PRAGMA 上的差异很大，
+        这类判断会越加越多，集中一处便于统一维护
+    """
+    return sync_conn.dialect.name == "postgresql"
+
+
 def _ensure_columns(sync_conn) -> None:
     """轻量迁移：为已有 users 表补上 phone / register_ip 列（仅当列不存在时执行）。
 
@@ -125,9 +136,10 @@ def _drop_global_unique_kb_name(sync_conn) -> None:
       残留的影响只是"不同组织不能有同名知识库"这一条限制，
       **不影响数据隔离（不会串数据）**，所以不阻断启动。
     """
+    # 这里仍需要 dialect 字符串：下面既要判断 sqlite，也要打进日志
     dialect = sync_conn.dialect.name
 
-    if dialect == "postgresql":
+    if _is_postgres(sync_conn):
         # 约束名由 PostgreSQL 自动生成，形如 knowledge_bases_name_key
         sync_conn.execute(text("ALTER TABLE knowledge_bases DROP CONSTRAINT IF EXISTS knowledge_bases_name_key"))
         sync_conn.execute(text("DROP INDEX IF EXISTS ix_knowledge_bases_name"))
@@ -182,11 +194,9 @@ def _ensure_domain_columns(sync_conn) -> None:
         老数据不属于任何明确领域，归到通用领域。
         不假设"旧数据都属于某个特定领域"—— 那种假设将来很难纠正。
     """
-    dialect = sync_conn.dialect.name
-
     for table in ("knowledge_bases", "sessions"):
         # ---- 1) 列是否存在 ----
-        if dialect == "postgresql":
+        if _is_postgres(sync_conn):
             exists = sync_conn.execute(
                 text(
                     "SELECT 1 FROM information_schema.columns "
@@ -208,7 +218,7 @@ def _ensure_domain_columns(sync_conn) -> None:
             )
 
         # ---- 2) 索引是否存在 ----
-        if dialect == "postgresql":
+        if _is_postgres(sync_conn):
             idx_exists = sync_conn.execute(
                 text("SELECT 1 FROM pg_indexes WHERE indexname = :n"),
                 {"n": f"ix_{table}_domain"},
@@ -241,9 +251,7 @@ def _ensure_tenancy_indexes(sync_conn) -> None:
     #   后续所有命令都被拒绝（报 current transaction is aborted）。
     #   这里踩过这个坑 —— 直接导致后端启动失败。
     #   正确做法：先查元数据确认存在，再执行删除。
-    dialect = sync_conn.dialect.name
-
-    if dialect == "postgresql":
+    if _is_postgres(sync_conn):
         # PG 上可能是"约束"也可能是"索引"，两种都查
         old_constraint = sync_conn.execute(
             text(

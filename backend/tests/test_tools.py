@@ -18,6 +18,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from tests.domain_guard import require_domain
 from app.domain import load_domain
 from app.tools.calculator import CalculatorTool, safe_eval
 from app.tools.date_range import DateRangeTool, parse_period, parse_range
@@ -161,14 +162,14 @@ class RegistryTestCase(unittest.TestCase):
     """注册表按领域筛选工具。"""
 
     def test_finance_has_both_tools(self):
-        d = load_domain("finance")
+        d = require_domain("finance")
         names = [t.name for t in get_tools_for(d)]
         self.assertIn("calculator", names)
         self.assertIn("date_range", names)
 
     def test_generic_has_no_tools(self):
         """通用领域不该启用任何工具（不增加开销）。"""
-        d = load_domain("generic")
+        d = require_domain("generic")
         self.assertEqual(get_tools_for(d), [])
 
     def test_unknown_tool_name_skipped(self):
@@ -184,7 +185,7 @@ class RegistryTestCase(unittest.TestCase):
         self.assertEqual([t.name for t in tools], ["calculator"])
 
     def test_schemas_format(self):
-        d = load_domain("finance")
+        d = require_domain("finance")
         schemas = get_schemas(get_tools_for(d))
         self.assertTrue(schemas)
         for s in schemas:
@@ -206,7 +207,7 @@ class ExecuteToolTestCase(unittest.TestCase):
 
         from app.tools.registry import execute_tool
 
-        tools = get_tools_for(load_domain("finance"))
+        tools = get_tools_for(require_domain("finance"))
         r = asyncio.run(execute_tool(tools, "not_exists", {}))
         self.assertIn("不可用", r)
 
@@ -217,7 +218,7 @@ class ExecuteToolTestCase(unittest.TestCase):
         from app.tools.registry import execute_tool
 
         # generic 领域没有工具
-        tools = get_tools_for(load_domain("generic"))
+        tools = get_tools_for(require_domain("generic"))
         r = asyncio.run(execute_tool(tools, "calculator", {"expr": "2+2"}))
         self.assertIn("不可用", r)
 
@@ -226,7 +227,7 @@ class ExecuteToolTestCase(unittest.TestCase):
 
         from app.tools.registry import execute_tool
 
-        tools = get_tools_for(load_domain("finance"))
+        tools = get_tools_for(require_domain("finance"))
         # calculator 需要 expr，这里给个错的字段名
         r = asyncio.run(execute_tool(tools, "calculator", {"wrong": "2+2"}))
         # 应该返回错误说明而不是抛异常

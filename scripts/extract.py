@@ -90,9 +90,17 @@ BACKEND_ENTRIES = [
 #       检查各领域互不污染。导出项目只有一个领域，这个测试既没有对照组，
 #       也会因为"找不到 finance/generic"而失败。
 #       留在产物里会让使用者以为项目坏了。
+# 这些文件**只在母项目里有意义**，导出产物里应删掉。
+#
+# 判断标准：文件的断言依赖"存在多个领域"这个前提。
+# 产物里只有一个领域，这类测试必然失败 —— 而失败会让使用者
+# 以为项目是坏的（实测踩到过）。
 BACKEND_SKIP_IN_SUBDIR = {
-    "scripts/extract.py",
-    "tests/test_domain_isolation.py",
+    "scripts/extract.py",            # 导出脚本本身，产物不需要
+    "tests/test_domain_isolation.py",  # 验证多领域隔离
+    "tests/test_intent_routing.py",    # 断言依赖 generic/finance 等多个领域
+    "tests/test_domain_data_isolation.py",  # 断言 KNOWN_DOMAINS 多值
+    "tests/test_review_fixes.py",      # 部分断言依赖多领域（如 generic 无工具）
 }
 
 # 复制时跳过的目录名 / 文件后缀（运行时产物、缓存、本地产物）
@@ -318,7 +326,14 @@ def _fix_domain_imports(out_backend: Path, created: list[Path]) -> None:
     母项目里协议叫 base.py，产物里改叫 spec.py。
     不统一改的话，导出项目一导入就 ModuleNotFoundError。
     """
-    for py in (out_backend / "app").rglob("*.py"):
+    # 同时扫 app/ 和 tests/ ——
+    # 只扫 app/ 是不够的：测试文件里也有 `from app.domain.base import DomainSpec`，
+    # 漏掉的话导出项目一跑测试就 ModuleNotFoundError（实测踩到，22 个错误）。
+    # 这和"注释清理只扫 app/"是同一类疏漏。
+    targets = list((out_backend / "app").rglob("*.py")) + list(
+        (out_backend / "tests").rglob("*.py")
+    )
+    for py in targets:
         t = py.read_text(encoding="utf-8")
         if "app.domain.base" in t:
             py.write_text(

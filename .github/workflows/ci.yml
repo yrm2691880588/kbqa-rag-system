@@ -207,18 +207,22 @@ jobs:
           LLM_API_KEY: "ci-fake-key-not-real"
           EMBEDDING_API_KEY: "ci-fake-key-not-real"
           # 产物目录。用变量而不是写死 /tmp，这样本地也能照着跑一遍
-          OUT_DIR: "/tmp/kbqa-ecommerce"
+          # 用变量而不是写死领域名：导出脚本要能处理任意领域，
+          # CI 只验证其中一个的话，换领域导出就可能悄悄坏掉。
+          EXPORT_DOMAIN: "finance"
+          OUT_DIR: "/tmp/kbqa-export-check"
         run: |
-          python scripts/extract.py ecommerce "$OUT_DIR"
+          python scripts/extract.py "$EXPORT_DOMAIN" "$OUT_DIR"
 
           echo "--- 1. 产物非空 ---"
           test -d $OUT_DIR/backend/app/domain || (echo "产物缺少 domain 目录"; exit 1)
 
           echo "--- 2. CI 矩阵只剩本领域 ---"
-          python -c "import sys,pathlib; t=pathlib.Path('$OUT_DIR/.github/workflows/ci.yml').read_text(encoding='utf-8'); sys.exit(0 if 'domain: [ecommerce]' in t else 1)" || (echo "产物 CI 矩阵未收敛为单领域"; exit 1)
+          python -c "import sys,pathlib,os; t=pathlib.Path('$OUT_DIR/.github/workflows/ci.yml').read_text(encoding='utf-8'); d=os.environ['EXPORT_DOMAIN']; sys.exit(0 if ('domain: [' + d + ']') in t else 1)" || (echo "产物 CI 矩阵未收敛为单领域"; exit 1)
 
           echo "--- 3. 不存在其他领域目录 ---"
-          for d in finance generic; do
+          for d in ecommerce generic; do
+            if [ "$d" = "$EXPORT_DOMAIN" ]; then continue; fi
             if [ -d "$OUT_DIR/backend/app/domain/$d" ]; then
               echo "隔离失败：产物里出现了 $d 目录"; exit 1
             fi
