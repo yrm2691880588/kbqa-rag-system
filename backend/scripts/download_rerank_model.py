@@ -35,7 +35,7 @@ if sys.platform == "win32":
 # 下载目标目录。可用 KBQA_ML_HOME 覆盖（默认放到用户目录下，
 # 不写死某个盘符 —— 别人的机器上可能没有那个盘）
 _ML_HOME = pathlib.Path(
-    os.environ.get("KBQA_ML_HOME", str(pathlib.Path.home() / "kbqa-ml"))
+    os.environ.get("KBQA_ML_HOME", str(pathlib.Path.home() / ".kbqa-rerank"))
 )
 TARGET = _ML_HOME / "models" / "bge-reranker-base"
 BASE = "https://modelscope.cn/api/v1/models/BAAI/bge-reranker-base/repo?Revision=master&FilePath="

@@ -9,7 +9,7 @@ torch + sentence-transformers 要 2-3GB。塞进主环境会：
   · 导出项目时带上 ML 依赖（使用者可能用云 API，根本不需要）
 
 所以拆成独立进程：
-  · 独立虚拟环境在 D 盘（D:\\kbqa-ml\\venv）
+  · 独立的 Python 环境（放哪由你决定，别塞进主后端环境）
   · 主后端通过 HTTP 调用
   · 服务挂了主后端自动降级（rerank.py 已有这个逻辑）
 
@@ -33,11 +33,29 @@ base 版约 1.1GB，CPU 上单条 50~100ms —— 一次问答最多 20 条候�
     GET /health
     → {"ok": true, "model": "...", "device": "cpu"}
 
+
 ## 启动
 
-    D:\\kbqa-ml\\venv\\Scripts\\python.exe scripts/rerank_server.py --port 8020
+    python scripts/rerank_server.py --port 8020 --model BAAI/bge-reranker-base
 
-首次启动会下载模型到 D:\\kbqa-ml\\models（由 HF_HOME 控制），约 1.1GB。
+首次启动会下载模型（约 1.1GB）。想指定存放位置就设环境变量：
+
+    HF_HOME         模型缓存目录
+    KBQA_ML_HOME    同上的简写（本项目约定）
+
+## 这是一个**独立服务**，不属于主项目
+
+    主项目只负责「怎么调用它」（配置 RERANK_LOCAL_URL），
+    不负责「怎么启动它」。
+
+    启动/停止它由你自己决定 —— 命令行、系统服务、
+    甚至部署在另一台机器上，都行。
+
+    主项目不引用、不管理、不假设它的存在：
+      · 不配 RERANK_LOCAL_URL → 不重排，功能照常
+      · 配了但服务没起        → 自动降级，功能照常
+      · 想用别的重排模型      → 只要实现这个 HTTP 接口就行
+
 """
 from __future__ import annotations
 
@@ -52,9 +70,16 @@ import time
 # 模型缓存目录。可以用环境变量 KBQA_ML_HOME 指到别处
 # （默认值只是建议，不写死某台机器的绝对路径是必要的：
 #   别人 clone 下来不该被强制塞到一个他们可能没有的盘符）
+# 默认放在用户目录下的 .kbqa-rerank/cache。
+# 用点开头是 Unix 惯例（表示配置/缓存类目录），
+# 名字里带 kbqa-rerank 表明是给这个重排服务用的，
+# 不占用一个大而空的通用名字。
 os.environ.setdefault(
     "HF_HOME",
-    os.environ.get("KBQA_ML_HOME", str(pathlib.Path.home() / "kbqa-ml" / "models")),
+    os.environ.get(
+        "KBQA_ML_HOME",
+        str(pathlib.Path.home() / ".kbqa-rerank" / "cache"),
+    ),
 )
 
 if sys.platform == "win32":

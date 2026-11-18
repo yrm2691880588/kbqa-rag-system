@@ -243,37 +243,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ---------- 可选：启动本地重排服务 ----------
-REM 为什么可选：没装 D 盘环境的用户也能正常用，
-REM 只是检索质量会差一些（实测命中率从 96% 掉到 80%）。
-REM 检测三步：
-REM   1. D:\kbqa-ml\venv\Scripts\python.exe 不存在 -> 跳过
-REM   2. 8020 端口已在监听 -> 跳过（已经开了）
-REM   3. 启动后不等待，重排慢一点不影响主流程
-set "RERANK_PY=D:\kbqa-ml\venv\Scripts\python.exe"
-set "RERANK_MODEL=D:\kbqa-ml\models\bge-reranker-base"
-if not exist "%RERANK_PY%" (
-  echo   [提示] 未检测到本地重排环境，已跳过。
-  goto RERANK_DONE
-)
-if not exist "%RERANK_MODEL%" (
-  echo   [提示] 未找到重排模型，已跳过。
-  goto RERANK_DONE
-)
-powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort 8020 -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" >nul 2>&1
-if not errorlevel 1 (
-  echo   [完成] 重排服务已在运行。
-  goto RERANK_DONE
-)
-echo   正在启动重排服务（加载模型，约 5-10 秒）...
-set "HF_HOME=D:\kbqa-ml\models"
-set "HF_HUB_OFFLINE=1"
-powershell -NoProfile -Command ^
-  "$p = Start-Process -FilePath '%RERANK_PY%' -ArgumentList 'scripts/rerank_server.py','--port','8020','--model','%RERANK_MODEL%','--preload' -WorkingDirectory '%ROOT%\backend' -WindowStyle Hidden -PassThru; $p.Id | Out-File -Encoding ascii '%PIDDIR%\rerank.pid'"
-echo   [完成] 重排服务已后台启动（端口 8020）。
-:RERANK_DONE
-REM ---------- 重排服务启动结束 ----------
-
 set /a WAITED=0
 :WAIT_BACKEND
 "%PYTHON_EXE%" -c "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%BACKEND_PORT%/api/v1/health/live',timeout=2).status==200 else 1)" >nul 2>&1
