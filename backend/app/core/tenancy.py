@@ -79,7 +79,7 @@ async def domain_kb_ids(db: AsyncSession) -> list[int]:
     专门给平台超管用：超管可以跨组织，但**不应该跨领域** ——
     领域决定的是"当前加载哪套业务配置"，不是权限范围。
 
-    不加这一层的话，超管在财经领域也能检索到电商库的内容（实测确认过）。
+    不加这一层的话，超管在 A 领域也能检索到 B 领域的库（实测确认过）。
     """
     stmt = select(KnowledgeBase.id).where(
         KnowledgeBase.domain == get_domain().name,
@@ -109,7 +109,7 @@ async def resolve_kb_scope(
         # 平台超管：可以跨组织，但**不能跨领域**。
         #
         # 为什么？领域是"当前加载哪套业务配置"（提示词/禁令/词表），
-        # 不是权限概念。让超管在财经领域读到电商资料，等于
+        # 不是权限概念。让超管在 A 领域读到 B 领域的资料，等于
         # 把另一个行业的内容混进当前业务，这跟身份权限无关。
         in_domain = set(await domain_kb_ids(db))
         if not requested:
