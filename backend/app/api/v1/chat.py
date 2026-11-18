@@ -39,6 +39,13 @@ from app.services.rag import stream_answer
 
 logger = logging.getLogger("kbqa.api.chat")
 
+# 后台任务的强引用集合。
+#
+# 为什么需要：asyncio 只 create_task 而不持有引用时，
+# 任务对象可能在中途被垃圾回收，导致"保存中断回答"静默失败。
+# 这是 asyncio 的已知陷阱，官方文档也明确要求保存引用。
+_BG_TASKS: set = set()
+
 router = APIRouter(prefix="/chat", tags=["问答"])
 
 # 回答命中敏感词时，替换给用户看的标准提示语。
@@ -67,6 +74,193 @@ def _safe_replacement(text_so_far: str) -> str:
 def _sse(event: str, data: dict) -> str:
     """把事件序列化成一行 SSE 文本（event + data 两行，空行结束）。"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# ---------------------------------------------------------------------------
+# 内部辅助
+# ---------------------------------------------------------------------------
+
+class _StreamSaver:
+    """流式回答的增量保存器。
+
+    ## 为什么需要独立会话
+
+        调用方的 `async with AsyncSessionLocal() as adb` 在请求被取消时会一起失效。
+        每次保存另开短会话，写完立刻关，互不影响。
+
+    ## 为什么用 UPSERT 而不是每次 INSERT
+
+        同一个回答要写很多次（边生成边写）。
+        如果每次都 INSERT，库里会出现几十条不完整的消息。
+        所以第一次写拿 id，后面都 UPDATE 那一条。
+    """
+
+    __slots__ = ("session_id", "citations", "message_id", "last_len", "_threshold")
+
+    def __init__(self, session_id: int, citations: list | None, threshold: int = 120):
+        self.session_id = session_id
+        self.citations = citations or []
+        self.message_id: int | None = None
+        self.last_len = 0
+        self._threshold = threshold
+
+    def should_flush(self, text: str) -> bool:
+        """累积到阈值才写，避免每个字都写一次数据库。"""
+        return len(text) - self.last_len >= self._threshold
+
+    async def flush(self, text: str, final: bool = False) -> None:
+        """把当前内容写进库（新建或更新同一条）。
+
+        Args:
+            text: 目前累积的完整文本。
+            final: 是否是最后一次写入（正常结束）。
+        """
+        import time as _time
+
+        content = text.strip()
+        if not content:
+            return
+
+        # 中断/未完成时加标注，让用户知道这不是完整答案
+        if not final:
+            content = content + chr(10) + chr(10) + "> ⏳ （回答生成中……）"
+
+        try:
+            async with AsyncSessionLocal() as db:
+                if self.message_id is None:
+                    m = Message(
+                        session_id=self.session_id,
+                        role="assistant",
+                        content=content,
+                        citations=self.citations or None,
+                    )
+                    db.add(m)
+                    await db.flush()
+                    self.message_id = m.id
+                else:
+                    m = await db.get(Message, self.message_id)
+                    if m is None:
+                        return
+                    m.content = content
+                    m.citations = self.citations or None
+                    if final:
+                        m.latency_ms = getattr(m, "latency_ms", None)
+
+                sess = await db.get(ChatSession, self.session_id)
+                if sess:
+                    import datetime as _dt
+
+                    sess.updated_at = _dt.datetime.now(_dt.timezone.utc)
+
+                await db.commit()
+            self.last_len = len(text)
+        except Exception as exc:  # noqa: BLE001
+            # 增量保存失败不应打断回答生成 —— 只是"这一版没存上"，
+            # 下一批还会再试。
+            logger.warning("增量保存失败（不影响回答）：%s", exc)
+
+    async def finish(self, text: str) -> int | None:
+        """正常结束时的最终写入。返回消息 id（供前端点赞用）。"""
+        content = text.strip()
+        if not content:
+            return self.message_id
+
+        try:
+            async with AsyncSessionLocal() as db:
+                if self.message_id is None:
+                    m = Message(
+                        session_id=self.session_id,
+                        role="assistant",
+                        content=content,
+                        citations=self.citations or None,
+                    )
+                    db.add(m)
+                    await db.flush()
+                    self.message_id = m.id
+                else:
+                    m = await db.get(Message, self.message_id)
+                    if m is not None:
+                        m.content = content
+                        m.citations = self.citations or None
+
+                sess = await db.get(ChatSession, self.session_id)
+                if sess:
+                    import datetime as _dt
+
+                    sess.updated_at = _dt.datetime.now(_dt.timezone.utc)
+
+                await db.commit()
+            return self.message_id
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("最终保存失败：%s", exc)
+            return self.message_id
+
+
+async def _save_partial_answer(
+    session_id: int,
+    answer_buf: list[str],
+    citations: list[dict] | None,
+    started: float,
+) -> None:
+    """保存被中断的回答（已生成的部分）。
+
+    Args:
+        session_id: 会话 id。
+        answer_buf: 已经累积的回答片段。
+        citations: 已检索到的引用。
+        started: 开始时间（算延迟用）。
+
+    Note:
+        这个函数**不抛异常**：保存失败只记日志。
+        它是在"已经有异常"的路径上执行的，再抛一个只会掩盖原始问题。
+
+    ⚠️ 必须**自己开一个独立会话**，不能用调用方传进来的那个。
+
+        为什么（实测确认的坑）：
+            这个函数在 `except CancelledError` 里执行，
+            而调用方的 `async with AsyncSessionLocal() as adb` 已经开始退出，
+            会话可能已被关闭 —— 往里 add 消息会**静默失败**。
+
+            具体表现：answer_buf 有 2 块内容（日志可见），
+            但一条消息都没落库，而且没有任何异常日志。
+            排查了很久才发现是会话生命周期问题，不是 SQL 问题。
+
+        独立会话是干净的，不受调用方事务状态影响。
+    """
+    import time as _time
+
+    partial = "".join(answer_buf).strip()
+
+    # 一点内容都没有 → 没必要存一条空消息
+    if not partial:
+        logger.info("中断时无已生成内容，不保存")
+        return
+
+    try:
+        async with AsyncSessionLocal() as save_db:
+            m = Message(
+                session_id=session_id,
+                role="assistant",
+                content=partial
+                + chr(10)
+                + chr(10)
+                + "> ⚠️ （回答被中断，以上是已生成的部分）",
+                citations=citations or None,
+                latency_ms=int((_time.time() - started) * 1000),
+            )
+            save_db.add(m)
+
+            sess = await save_db.get(ChatSession, session_id)
+            if sess:
+                import datetime as _dt
+
+                sess.updated_at = _dt.datetime.now(_dt.timezone.utc)
+
+            await save_db.commit()
+        logger.info("已保存中断的部分回答（%d 字）", len(partial))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("保存中断回答失败：%s", exc)
+
 
 
 @router.post("")
@@ -174,6 +368,13 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
         """SSE 事件生成器：转发模型流 + 结束后独立会话写库。"""
         # 流结束后用于写库的字段
         answer_buf: list[str] = []
+        # 增量保存器：每累积 120 字就落一次库。
+        #
+        # 为什么不能等结束才存（实测结论）：
+        #   客户端断开时 Starlette 会取消整个请求任务，
+        #   在 except 分支里 await 或 create_task 都会被一起取消。
+        #   所以必须"边生成边存"，断开时库里已经有最新一版。
+        stream_saver: _StreamSaver | None = None
         citations: list = []
         answered = False
         started = time.time()
@@ -216,6 +417,7 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                     ):
                         if event == "meta":
                             citations = data.get("citations", [])
+                            stream_saver = _StreamSaver(session_id, citations)
                             yield _sse("meta", data)
                         elif event in ("thinking", "answer"):
                             if event == "answer":
@@ -244,6 +446,12 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                                         })
                                         break
                                 answer_buf.append(piece)
+                                # 增量落库：断开时最多丢 300 字
+                                if stream_saver is None:
+                                    stream_saver = _StreamSaver(session_id, citations)
+                                cur_text = "".join(answer_buf)
+                                if stream_saver.should_flush(cur_text):
+                                    await stream_saver.flush(cur_text)
                             yield _sse(event, data)
                         elif event == "no_hit":
                             answered = False
@@ -265,17 +473,29 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                 # 3) 流结束：落 assistant 消息 + 刷新会话活跃时间 + 问答日志
                 full_answer = "".join(answer_buf).strip()
                 assistant_msg_id: int | None = None
+
+                # 复用增量保存器做最终写入，而不是再 INSERT 一条。
+                #
+                # 为什么：生成过程中 _StreamSaver 已经写过几次同一条消息，
+                # 这里如果重新 INSERT，库里会出现两条内容几乎一样的回答
+                # （一条是"生成中"的半成品，一条是完整的），用户会困惑。
+                #
+                # finish() 的行为：
+                #   · 增量写过 → UPDATE 那一条，去掉"生成中"标注
+                #   · 从没写过（答案很短没到阈值）→ INSERT 一条
                 if full_answer:
-                    m = Message(
-                        session_id=session_id,
-                        role="assistant",
-                        content=full_answer,
-                        citations=citations or None,
-                        latency_ms=int((time.time() - started) * 1000),
-                    )
-                    adb.add(m)
-                    await adb.flush()          # flush 一下才能拿到自增主键 id
-                    assistant_msg_id = m.id
+                    if stream_saver is None:
+                        stream_saver = _StreamSaver(session_id, citations)
+                    assistant_msg_id = await stream_saver.finish(full_answer)
+                    # 记录延迟（这条是最终版，延迟才有意义）
+                    try:
+                        async with AsyncSessionLocal() as _db:
+                            _m = await _db.get(Message, assistant_msg_id)
+                            if _m is not None:
+                                _m.latency_ms = int((time.time() - started) * 1000)
+                                await _db.commit()
+                    except Exception:  # noqa: BLE001
+                        pass
                 sess = await adb.get(ChatSession, session_id)
                 if sess:
                     sess.updated_at = dt.datetime.now(dt.timezone.utc)
@@ -306,15 +526,47 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                 if assistant_msg_id is not None:
                     yield _sse("saved", {"message_id": assistant_msg_id})
             except GeneratorExit:
-                # 客户端主动断开（关页面/点停止生成）时，生成器被关闭会抛这个。
+                logger.warning(
+                    "DEBUG 诊断：捕获 GeneratorExit，answer_buf 长度=%d，"
+                    "内容前 40 字=%r",
+                    len(answer_buf), "".join(answer_buf)[:40],
+                )
+                # 客户端主动断开（关页面/切会话/点停止生成）时，生成器被关闭会抛这个。
                 # 不能当成错误处理，也不能向外 yield 任何东西（流已经没了）。
                 logger.info("客户端已断开，停止生成（token 用量在 finally 里补记）")
+
+                # ⚠️ 为什么用 create_task 而不是 await：
+                #   GeneratorExit 里 **不能 await** —— 生成器正准备销毁，
+                #   事件循环不允许它再挂起，await 会抛
+                #   "RuntimeError: async generator ignored GeneratorExit"。
+                #
+                #   create_task 只是把协程排进事件循环，当前函数立刻返回，
+                #   保存任务在后台独立跑完。
+                #
+                #   为什么不保存也无所谓？不行 —— 用户切回来只看到自己的提问，
+                #   会以为回答被"吞"了（实测反馈过）。
+                _bg = asyncio.create_task(
+                    _save_partial_answer(session_id, answer_buf, citations, started)
+                )
+                # 持有引用防止被 GC 提前回收（asyncio 的已知陷阱：
+                # 只 create_task 不保存引用，任务可能在中途被垃圾回收）
+                _BG_TASKS.add(_bg)
+                _bg.add_done_callback(_BG_TASKS.discard)
                 raise
             except asyncio.CancelledError:
+                logger.warning(
+                    "DEBUG 诊断：捕获 CancelledError，answer_buf 长度=%d",
+                    len(answer_buf),
+                )
                 # 同上，但这是"服务端取消任务"的路径（如超时、进程退出）。
                 logger.info("问答流被取消（token 用量在 finally 里补记）")
+                await _save_partial_answer(session_id, answer_buf, citations, started)
                 raise
-            except Exception:
+            except Exception as _exc:
+                logger.warning(
+                    "DEBUG 诊断：捕获 %s，answer_buf 长度=%d",
+                    type(_exc).__name__, len(answer_buf),
+                )
                 logger.exception("问答流处理异常")
                 yield _sse("error", {"message": "服务内部错误，请稍后重试"})
                 yield _sse("done", {"latency_ms": int((time.time() - started) * 1000), "citations": []})

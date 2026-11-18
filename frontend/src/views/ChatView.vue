@@ -285,6 +285,30 @@ const inputText = ref('')
 const sending = ref(false)
 let abortCtrl: AbortController | null = null
 
+/**
+ * 正在后台生成的回答（按会话 id 索引）。
+ *
+ * 为什么需要它：
+ *   用户切到别的会话时，请求不该被中断（他还想回来看结果）。
+ *   但 displayMessages 在切换时会被清空，事件回调找不到目标就会丢弃内容。
+ *
+ *   所以把"正在生成的回答"独立存一份：事件先写这里，
+ *   当前显示的正好是这个会话时再同步到界面。
+ *
+ * 结构：
+ *   sessionId → { key, content, thinking, citations, done }
+ */
+const pendingAnswers = new Map<
+  number,
+  {
+    key: string
+    content: string
+    thinking: string
+    citations: unknown[] | null
+    done: boolean
+  }
+>()
+
 const msgListRef = ref<HTMLElement>()
 const bottomAnchor = ref<HTMLElement>()
 
@@ -347,17 +371,47 @@ async function newSession() {
 
 async function switchSession(s: ChatSession, force = false) {
   if (currentSession.value?.id === s.id && !force) return
-  abortCtrl?.abort()
-  sending.value = false
+
+  // ⚠️ 这里**不能** abort。
+  //
+  // 原来写的是 abortCtrl?.abort()，导致用户切走时正在生成的回答被直接丢弃
+  // （后端也不保存），切回来只看到自己的提问 —— 实测反馈过这个问题。
+  //
+  // 现在改为：请求在后台继续，回答写入 pendingAnswers。
+  // 只有用户明确点「停止生成」时才 abort（那是明确意图，见 stopGenerate）。
+
+  const prevId = currentSession.value?.id
   currentSession.value = s
   displayMessages.value = []
   loadingHistory.value = true
+
+  // 切会话时，"正在回答中"的标志只应反映**目标会话**的状态
+  sending.value = pendingAnswers.has(s.id) && !pendingAnswers.get(s.id)!.done
+
   try {
     const msgs = (await listMessages(s.id)).data
     displayMessages.value = msgs.map((m) => toMsgItem(m))
+
+    // 如果这个会话有后台还在生成的回答，把它接上
+    const pending = pendingAnswers.get(s.id)
+    if (pending) {
+      const item = createTypingMessage()
+      item.key = pending.key
+      item.content = pending.content
+      item.thinking = pending.thinking
+      item.citations = pending.citations as never
+      item.typing = !pending.done
+      displayMessages.value.push(item)
+    }
+
     await scrollBottom(false)
   } catch { /* 拦截器已提示 */ } finally {
     loadingHistory.value = false
+  }
+
+  // prevId 只用于调试：切换前的会话在后台继续生成
+  if (prevId && pendingAnswers.has(prevId)) {
+    // 不做任何事 —— 只是保持这个分支存在，便于将来扩展
   }
 }
 
@@ -405,7 +459,14 @@ async function doDelete() {
 async function send(opts: { question?: string; regenerate?: boolean } = {}) {
   const isRegen = !!opts.regenerate
   const q = isRegen ? (opts.question ?? '') : inputText.value.trim()
-  if (!q || sending.value || !currentSession.value) return
+  // 守卫只拦"**当前这个会话**正在回答中"，不拦全局。
+  //
+  // 为什么：sending 原来是个全局开关，切到别的会话后它还挂在 true，
+  // 导致在新会话里发不出问题（或者反过来，两个会话同时发时状态互相踩）。
+  // 现在按会话判断：只有本会话有未完成的生成时才拦。
+  if (!q || !currentSession.value) return
+  const pendingHere = pendingAnswers.get(currentSession.value.id)
+  if (pendingHere && !pendingHere.done) return
   if (!isRegen) inputText.value = ''
 
   const sid = currentSession.value.id
@@ -421,18 +482,57 @@ async function send(opts: { question?: string; regenerate?: boolean } = {}) {
   await scrollBottom(true)
   sending.value = true
 
+  // 登记到 pendingAnswers：即使用户切走，内容也写在这里不会丢
+  pendingAnswers.set(sid, {
+    key: aiItem.key,
+    content: '',
+    thinking: '',
+    citations: null,
+    done: false,
+  })
+
   let hasStreamedAnswer = false
   let errorMsg = ''
   /** 唯一关掉全局"正在回答中"状态的地方，确保每条路径都走到 */
   const finishSending = () => {
-    sending.value = false
+    // 标记这个会话的后台生成已结束。
+    //
+    // 为什么保留 pendingAnswers 而不是直接删：
+    //   用户可能正切在别的会话，切回来时还要靠它恢复内容。
+    //   这里只标 done，内容留着；下次在这个会话里发新问时再覆盖。
+    const pending = pendingAnswers.get(sid)
+    if (pending) pending.done = true
+
+    // 只有当前正在看的会话结束时，才解除全局"回答中"
+    if (currentSession.value?.id === sid) {
+      sending.value = false
+    }
     abortCtrl = null
   }
   abortCtrl = streamChat(
     sid,
     q,
     (ev) => {
+      // ── 先写后台缓存，再决定要不要刷界面 ──
+      //
+      // 为什么是这个顺序：
+      //   用户可能在生成过程中切到别的会话。那时 displayMessages 已被清空，
+      //   按原来"找不到 item 就 return"的写法，后续内容全部丢失，
+      //   切回来只看到自己的提问（实测反馈的 bug）。
+      //
+      //   现在先无条件写进 pendingAnswers（按会话 id 存），
+      //   只有当用户"正在看这个会话"时才同步到界面。
+      const pending = pendingAnswers.get(sid)
+      if (pending) {
+        if (ev.type === 'answer') pending.content += ev.text
+        else if (ev.type === 'thinking') pending.thinking += ev.text
+        else if (ev.type === 'meta') pending.citations = ev.citations
+        else if (ev.type === 'replace') pending.content = ev.text
+        else if (ev.type === 'done') pending.done = true
+      }
+
       const item = displayMessages.value.find((m) => m.key === aiItem.key)
+      // 找不到 item 说明用户切到别的会话了：内容已进缓存，这里安全跳过
       if (!item) return
       switch (ev.type) {
         case 'meta':
