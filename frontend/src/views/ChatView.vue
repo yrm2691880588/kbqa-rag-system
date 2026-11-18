@@ -183,6 +183,16 @@
                 @keydown="onKeydown"
               />
               <div class="input-actions">
+                <el-tooltip content="把这封对话导出成 Excel" placement="top">
+                  <el-button
+                    v-if="currentSession && displayMessages.length"
+                    text
+                    :loading="exporting"
+                    @click="doExport"
+                  >
+                    <el-icon style="margin-right: 4px"><Download /></el-icon>导出
+                  </el-button>
+                </el-tooltip>
                 <span class="input-tip">Enter 发送 · Shift+Enter 换行</span>
                 <el-button v-if="sending" type="danger" @click="stopGenerate">
                   <el-icon style="margin-right: 4px"><VideoPause /></el-icon>停止
@@ -231,14 +241,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ChatDotRound, Delete, EditPen, Plus, Promotion, Top, Bottom, VideoPause, WarningFilled,
+  ChatDotRound, Delete, EditPen, Plus, Promotion, Top, Bottom, VideoPause, WarningFilled, Download,
 } from '@element-plus/icons-vue'
 import { listKBs, type KnowledgeBase } from '@/api/kb'
 import {
   createSession, deleteSession, listMessages, listSessions, renameSession,
   setMessageFeedback,
-  streamChat, type ChatMessage, type ChatSession, type Citation,
-} from '@/api/chat'
+  streamChat, type ChatMessage, type ChatSession, type Citation, exportSession } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
 import { useDomain } from '@/stores/domain'
 import {
@@ -670,6 +679,55 @@ async function send(opts: { question?: string; regenerate?: boolean } = {}) {
 
   // 登记控制器：让「停止生成」能找到**这个会话**的请求
   if (_ctrl) activeControllers.set(sid, _ctrl)
+}
+
+/**
+ * 导出当前会话为 Excel。
+ *
+ * 为什么用 axios 的 blob + 手动创建 a 标签下载，而不是 window.open：
+ *   window.open 依赖 Cookie 鉴权，但拿不到失败原因
+ *   （401/500 时只会弹出一个空白页或 JSON 错误页，用户一头雾水）。
+ *   走 axios 能统一走拦截器，失败时有正常提示。
+ */
+const exporting = ref(false)
+
+async function doExport() {
+  const sid = currentSession.value?.id
+  if (!sid || exporting.value) return
+
+  exporting.value = true
+  try {
+    const res = await exportSession(sid)
+    const blob = res.data
+
+    // 从响应头里取文件名（后端按 RFC 5987 编码过）
+    let filename = `对话记录_${sid}.xlsx`
+    const cd = String(res.headers?.['content-disposition'] || '')
+    const m = cd.match(/filename\*=UTF-8''([^;]+)/i)
+    if (m) {
+      try {
+        filename = decodeURIComponent(m[1])
+      } catch {
+        /* 解码失败就用默认名 */
+      }
+    }
+
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    // 延迟释放：立即 revoke 在部分浏览器上会导致下载中断
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000)
+
+    ElMessage.success('已开始下载')
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    exporting.value = false
+  }
 }
 
 function stopGenerate() {

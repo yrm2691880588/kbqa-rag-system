@@ -9,6 +9,7 @@ import datetime as dt
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import func, select, or_
 
 from app.core.deps import CurrentUser, DbSession
@@ -17,10 +18,18 @@ from app.core.tenancy import resolve_kb_scope
 from app.models.message import Message
 from app.models.session import ChatSession
 from app.schemas.chat import FeedbackRequest, MessageOut, SessionCreate, SessionOut, SessionUpdate
+from app.services import export as export_service
 
 logger = logging.getLogger("kbqa.api.sessions")
 
 router = APIRouter(prefix="/sessions", tags=["会话"])
+
+# 单次导出最多导多少条消息。
+#
+# 为什么要有上限：一封会话理论上可以有无数条消息，
+# 全部读进内存再生成 Excel 可能把服务打爆。
+# 2000 条对正常使用完全够（一天问 50 次也要 40 天）。
+_EXPORT_MAX_MESSAGES = 2000
 
 
 async def _own_session(db: DbSession, session_id: int, user_id: int) -> ChatSession:
@@ -163,6 +172,89 @@ async def list_messages(
     rows = (await db.execute(stmt)).scalars().all()
     rows.reverse()  # 恢复时间正序，前端按顺序渲染
     return rows
+
+
+@router.get("/{session_id}/export")
+async def export_session(
+    session_id: int,
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """把一封会话的全部记录导出成 Excel（本用户自己的会话）。
+
+    ## 为什么是 Excel
+
+        用户导出的实际用途通常是"归档 + 统计"：
+        问了多少问题、哪些回答被踩、平均响应时间、引用集中在哪几份文档。
+        Markdown/PDF 只适合阅读，做不了这些。
+
+    ## 为什么一次导出全部消息（不分页）
+
+        导出的意义就是"完整备份"。
+        分页导出会让用户拿到一堆碎片文件，还得自己拼。
+
+        为了防极端情况（一封会话几万条消息把内存打爆），
+        这里设了一个上限：超过 `_EXPORT_MAX_MESSAGES` 只导最近的，
+        并在响应头里标明"被截断"。
+
+    ## 权限
+
+        只能导自己的会话（`_own_session` 强校验 session.user_id）。
+        管理员也不能导别人的 —— 会话内容属于个人隐私。
+    """
+    sess = await _own_session(db, session_id, current_user.id)
+
+    rows = (
+        await db.execute(
+            select(Message)
+            .where(Message.session_id == session_id)
+            .order_by(Message.id.asc())
+            .limit(_EXPORT_MAX_MESSAGES)
+        )
+    ).scalars().all()
+
+    messages = [
+        {
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at,
+            "citations": m.citations,
+            "feedback": m.feedback,
+            "feedback_reason": m.feedback_reason,
+            "feedback_note": m.feedback_note,
+            "latency_ms": m.latency_ms,
+        }
+        for m in rows
+    ]
+
+    content = export_service.build_session_xlsx(
+        session_title=sess.title or f"会话{session_id}",
+        messages=messages,
+    )
+    filename = export_service.suggest_filename(
+        sess.title or f"会话{session_id}", session_id
+    )
+
+    # 文件名里可能有中文，必须按 RFC 5987 编码，
+    # 否则某些浏览器会把中文变成乱码。
+    from urllib.parse import quote
+
+    ascii_fallback = f"session_{session_id}_export.xlsx"
+    disposition = (
+        f"attachment; filename=\"{ascii_fallback}\"; "
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+
+    logger.info(
+        "用户 %s 导出会话 %d（%d 条消息）",
+        current_user.id, session_id, len(messages),
+    )
+
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": disposition},
+    )
 
 
 @router.post("/{session_id}/messages/{message_id}/feedback", response_model=MessageOut)

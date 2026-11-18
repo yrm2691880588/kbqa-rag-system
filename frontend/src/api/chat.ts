@@ -55,6 +55,24 @@ export function deleteSession(id: number) {
   return http.delete(`/sessions/${id}`)
 }
 
+/**
+ * 导出一封会话为 Excel。
+ *
+ * 返回的是**二进制流**（responseType: 'blob'），
+ * 调用方拿到后要自己触发浏览器下载。
+ *
+ * 为什么不在这个函数里直接下载：
+ *   下载涉及 DOM 操作（创建 a 标签、点击、清理），
+ *   API 层保持"只拿数据"，由视图层决定怎么用，
+ *   测试时也能直接拿到 blob 校验内容。
+ */
+export function exportSession(sessionId: number) {
+  return http.get<Blob>(`/sessions/${sessionId}/export`, {
+    responseType: 'blob',
+    timeout: 60000,
+  })
+}
+
 export function listMessages(sessionId: number) {
   return http.get<ChatMessage[]>(`/sessions/${sessionId}/messages`)
 }
