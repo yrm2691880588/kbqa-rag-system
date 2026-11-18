@@ -43,23 +43,30 @@ echo.
 set "KILLED=0"
 
 REM ---------- 1) 后端 ----------
-echo [1/4] 停止后端（%BACKEND_PORT%）...
+echo [1/5] 停止后端（%BACKEND_PORT%）...
 call :STOP_TARGET "backend" %BACKEND_PORT% "后端"
 echo.
 
 REM ---------- 2) 前端 ----------
-echo [2/4] 停止前端（%FRONTEND_PORT%）...
+echo [2/5] 停止前端（%FRONTEND_PORT%）...
 call :STOP_TARGET "frontend" %FRONTEND_PORT% "前端"
 echo.
 
+
+REM ---------- 1.5) 重排服务（如果启动过）----------
+REM 为什么单独停：重排是独立进程（D 盘虚拟环境），
+REM 不停的话会一直占 655MB 内存和 8020 端口。
+echo [1.5/5] 停止重排服务（8020）...
+call :STOP_TARGET "rerank" 8020 "重排服务"
+echo.
 REM ---------- 2.5) 清理 uvicorn reload 产生的孤儿子进程 ----------
-echo [3/4] 清理残留的 uvicorn 子进程...
+echo [3/5] 清理残留的 uvicorn 子进程...
 powershell -NoProfile -Command ^
   "$root = '%ROOT%'; $n = 0; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue | ForEach-Object { if ($_.CommandLine -match 'multiprocessing-fork' -and $_.CommandLine -match 'parent_pid') { if ($_.CommandLine -like ('*' + $root + '*')) { $parent = $_.ParentProcessId; $alive = Get-Process -Id $parent -ErrorAction SilentlyContinue; if (-not $alive) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ } } } }; Write-Output ('  清理本项目孤儿进程: ' + $n + ' 个')"
 if errorlevel 1 echo   [提示] 孤儿进程清理跳过（无 PowerShell 或无残留）。
 
 REM ---------- 3) 数据库容器 ----------
-echo [4/4] 停止数据库容器（PostgreSQL + Qdrant）...
+echo [4/5] 停止数据库容器（PostgreSQL + Qdrant）...
 
 where docker >nul 2>&1
 if errorlevel 1 (
@@ -86,6 +93,7 @@ echo.
 :DONE
 if exist "%PIDDIR%\backend.pid" del /q "%PIDDIR%\backend.pid" >nul 2>&1
 if exist "%PIDDIR%\frontend.pid" del /q "%PIDDIR%\frontend.pid" >nul 2>&1
+if exist "%PIDDIR%\rerank.pid" del /q "%PIDDIR%\rerank.pid" >nul 2>&1
 
 echo ============================================================
 if "!KILLED!"=="0" (
@@ -166,7 +174,7 @@ REM 判据（任一命中即认为是本项目）：
 REM   a) 含 uvicorn app.main:app 且含 --port 本项目端口
 REM   b) 含 vite 且含本项目前端端口
 REM   c) 含项目绝对路径
-for /f "usebackq delims=" %%R in (`powershell -NoProfile -Command "try { $p = Get-CimInstance Win32_Process -Filter 'ProcessId=%PID%' -ErrorAction Stop; $c = $p.CommandLine; $port = '%PORT%'; $be = $c.Contains('uvicorn app.main:app') -and $c.Contains('--port ' + $port); $fe = $c.Contains('vite') -and $c.Contains($port); $pa = $c.StartsWith('%ROOT%') -or $c.Contains('%ROOT%'); $ours = $be -or $fe -or $pa; if ($ours) { 'YES' } else { 'NO' } } catch { 'GONE' }" 2^>nul`) do set "VERDICT=%%R"
+for /f "usebackq delims=" %%R in (`powershell -NoProfile -Command "try { $p = Get-CimInstance Win32_Process -Filter 'ProcessId=%PID%' -ErrorAction Stop; $c = $p.CommandLine; $port = '%PORT%'; $be = $c.Contains('uvicorn app.main:app') -and $c.Contains('--port ' + $port); $fe = $c.Contains('vite') -and $c.Contains($port); $rr = $c.Contains('rerank_server.py') -and $c.Contains($port); $pa = $c.StartsWith('%ROOT%') -or $c.Contains('%ROOT%'); $ours = $be -or $fe -or $rr -or $pa; if ($ours) { 'YES' } else { 'NO' } } catch { 'GONE' }" 2^>nul`) do set "VERDICT=%%R"
 
 if "!VERDICT!"=="GONE" (
     echo   [提示] PID %PID% 进程已不存在（端口可能处于 TIME_WAIT 残留，几十秒后自动释放）。
