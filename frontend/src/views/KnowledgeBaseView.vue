@@ -83,6 +83,13 @@
             <template #default="{ row }">
               <span class="file-cell">
                 <el-icon class="file-icon"><Document /></el-icon>{{ row.filename }}
+                <!-- 版本号：只在第 2 版及以上显示，避免正常文件多一堆 "v1" 噪音 -->
+                <el-tag
+                  v-if="row.version && row.version > 1"
+                  size="small"
+                  type="info"
+                  class="ver-tag"
+                >第 {{ row.version }} 版</el-tag>
               </span>
             </template>
           </el-table-column>
@@ -374,12 +381,76 @@ async function doUploadBatch(opt: UploadRequestOptions) {
 let uploadTimer: number | undefined
 const pendingFiles: File[] = []
 
+/**
+ * 检查哪些文件与已有文档同名，并询问用户是否覆盖。
+ *
+ * 为什么要前端先查一遍：
+ *   后端默认不覆盖（返回 409）。如果逐个让后端返回 409 再弹窗，
+ *   批量上传时用户会被弹窗打断很多次。
+ *   前端先扫一遍、一次性问清楚，体验好得多。
+ *
+ * 比对规则与后端保持一致：**去掉扩展名**再比。
+ *   这样 name.md 改成 name.txt（导出格式变了）也算"同一份资料更新"。
+ *
+ * @returns true 表示可以继续（覆盖或不冲突），false 表示用户取消。
+ */
+async function confirmOverwrite(files: File[]): Promise<boolean> {
+  if (!currentKb.value) return false
+
+  const NL = String.fromCharCode(10)
+  const allDocs = docs.value
+  const stemOf = (n: string) => (n.includes('.') ? n.slice(0, n.lastIndexOf('.')) : n)
+
+  const existing = new Map<string, DocItem>()
+  for (const d of allDocs) existing.set(stemOf(d.filename), d)
+
+  const clashes: Array<{ file: File; doc: DocItem }> = []
+  for (const f of files) {
+    const hit = existing.get(stemOf(f.name))
+    if (hit) clashes.push({ file: f, doc: hit })
+  }
+
+  if (!clashes.length) return true
+
+  const list = clashes
+    .slice(0, 5)
+    .map((c) => `· ${c.doc.filename}（当前第 ${c.doc.version} 版）→ ${c.file.name}`)
+    .join(NL)
+  const more = clashes.length > 5 ? NL + `…等 ${clashes.length} 个` : ''
+
+  const text =
+    `以下 ${clashes.length} 个文件与已有文档同名：` +
+    NL + NL + list + more + NL + NL +
+    '覆盖后旧内容和它的知识片段会被替换（版本号 +1），历史对话里的引用不受影响。'
+
+  try {
+    await ElMessageBox.confirm(text, '发现同名文档', {
+      type: 'warning',
+      confirmButtonText: '覆盖',
+      cancelButtonText: '取消上传',
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function flushUploads() {
   if (!currentKb.value || !pendingFiles.length) return
   const files = pendingFiles.splice(0, pendingFiles.length)
+
+  // 先问清楚同名覆盖，再决定传不传
+  const ok = await confirmOverwrite(files)
+  if (!ok) {
+    ElMessage.info('已取消上传')
+    return
+  }
+
   uploading.value = true
   try {
-    const res = await uploadDocsBatch(currentKb.value.id, files)
+    // 用户已确认（或本来没冲突），带 overwrite=true
+    // eslint-disable-next-line prettier/prettier
+    const res = await uploadDocsBatch(currentKb.value.id, files, true)
     if (res.failed === 0) {
       ElMessage.success(`${res.succeeded} 个文档已上传，开始入库`)
     } else {
@@ -632,5 +703,9 @@ onBeforeUnmount(stopPoll)
   color: var(--text-1);
   white-space: pre-wrap;
   word-break: break-all;
+}
+.file-cell .ver-tag {
+  margin-left: 6px;
+  vertical-align: middle;
 }
 </style>

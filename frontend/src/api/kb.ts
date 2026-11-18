@@ -47,11 +47,19 @@ export const deleteKB = (id: number) => http.delete(`/knowledge-bases/${id}`)
 
 // ---- 文档 ----
 export const listDocs = (kbId: number) => http.get<DocItem[]>(`/knowledge-bases/${kbId}/documents`)
-export const uploadDoc = (kbId: number, file: File) => {
+/**
+ * 上传单个文档。
+ *
+ * @param overwrite 已有同名文档时是否覆盖。
+ *   默认 false —— 后端会返回 409 并说明"已存在同名文档《X》（第 N 版）"，
+ *   前端弹窗问用户，用户确认后再带 true 重传。
+ */
+export const uploadDoc = (kbId: number, file: File, overwrite = false) => {
   const form = new FormData()
   form.append('file', file)
   return http.post<DocItem>(`/knowledge-bases/${kbId}/documents`, form, {
     timeout: 180000, // 上传大文件放宽超时
+    params: { overwrite },
   })
 }
 /** 批量上传结果（部分成功语义） */
@@ -70,12 +78,13 @@ export interface BatchUploadResult {
  *   · 20 个文件循环调 = 20 次串行请求，慢且中途失败会留下半截状态
  *   · 批量接口逐个处理，返回"哪几个成功、哪几个失败、为什么"
  */
-export const uploadDocsBatch = (kbId: number, files: File[]) => {
+export const uploadDocsBatch = (kbId: number, files: File[], overwrite = false) => {
   const form = new FormData()
   for (const f of files) form.append('files', f)
   return http
     .post<BatchUploadResult>(`/knowledge-bases/${kbId}/documents/batch`, form, {
       timeout: 300000, // 批量上传放宽超时
+      params: { overwrite },
     })
     .then((r) => r.data)
 }

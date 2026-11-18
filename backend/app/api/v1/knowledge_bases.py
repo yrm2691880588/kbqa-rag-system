@@ -174,6 +174,7 @@ async def _save_one_document(
     kb,
     db,
     file: UploadFile,
+    overwrite_name: bool = False,
 ) -> Document:
     """保存**单个**上传文件：校验 → 查重 → 落盘 → 入队。
 
@@ -249,6 +250,76 @@ async def _save_one_document(
         await db.delete(exist)
         await db.flush()
 
+    # ---- 同名文档处理（"更新"语义）----
+    #
+    # 为什么按"去掉扩展名的文件名"比对：
+    #   用户视角的"同一份资料更新了"通常是 a.md → a.md，
+    #   或者 a.md → a.txt（导出格式变了）。
+    #   按完整文件名比对的话，第二种会被当成新文档，又变成两份。
+    #
+    # 为什么默认不覆盖：
+    #   同名但内容完全不同的两个文件是真实存在的（两个不同的「数据.md」）。
+    #   直接覆盖会误伤用户数据。所以默认返回 409 让前端询问，
+    #   用户确认后带 overwrite_name=true 再传一次。
+    stem = safe_name.rsplit(".", 1)[0] if "." in safe_name else safe_name
+    same_name_docs = (await db.execute(
+        select(Document).where(Document.kb_id == kb_id)
+    )).scalars().all()
+    same_name_docs = [
+        d for d in same_name_docs
+        if (d.filename.rsplit(".", 1)[0] if "." in d.filename else d.filename) == stem
+    ]
+
+    if same_name_docs:
+        target = same_name_docs[0]
+
+        if not overwrite_name:
+            # 交给前端弹窗确认，不擅自覆盖
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"已存在同名文档《{target.filename}》（当前第 {target.version} 版）。"
+                f"是否用新文件覆盖它？",
+            )
+
+        # 用户确认覆盖：复用 doc_id，版本号 +1
+        #
+        # 为什么复用 doc_id 就够了：
+        #   ingestion 入库前会 delete_document_chunks(doc_id) 清掉旧向量，
+        #   而向量点 ID 是按 doc_id 生成的确定性 UUID。
+        #   所以不需要额外清理逻辑。
+        if target.status in ("pending", "parsing", "embedding"):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"《{target.filename}》正在入库处理中，请等它完成后再覆盖",
+            )
+
+        target.filename = safe_name
+        target.file_hash = file_hash
+        target.file_size = len(content)
+        target.doc_type = ext
+        target.version = (target.version or 1) + 1
+        target.status = "pending"
+        target.progress = 0
+        target.error_msg = None
+        target.chunk_count = 0
+        db.add(target)
+        await db.commit()
+        await db.refresh(target)
+
+        # 重写磁盘文件（用新的扩展名，所以路径可能变）
+        d = upload_dir_for(kb_id)
+        d.mkdir(parents=True, exist_ok=True)
+        p_new = doc_file_path(kb_id, target.id, ext)
+        with open(p_new, "wb") as f:
+            f.write(content)
+
+        await job_queue.enqueue(db, target.id, kb_id)
+        logger.info(
+            "文档《%s》已覆盖更新（doc_id=%d，第 %d 版）",
+            safe_name, target.id, target.version,
+        )
+        return target
+
     # 建记录 → 落盘 → 触发后台入库
     doc = Document(
         kb_id=kb_id,
@@ -287,16 +358,31 @@ async def upload_document(
     db: DbSession,
     admin: AdminUser,
     file: UploadFile = File(...),
+    overwrite: bool = Query(
+        False,
+        description="已有同名文档时是否覆盖。默认 false —— 会返回 409 让前端询问用户。",
+    ),
 ):
     """上传单个文档并自动触发解析入库（本组织管理员）。
 
     支持 docx / pdf / xlsx / txt / md / html。
     需要一次传多个文件时用 /documents/batch。
+
+    ## 同名文档怎么处理
+
+        默认不覆盖：返回 409 并说明"已存在同名文档《X》（第 N 版），是否覆盖？"
+        前端弹窗问用户，用户确认后带 `overwrite=true` 再传一次。
+
+        为什么默认不覆盖：同名但内容不同的两个文件是真实存在的
+        （两个不同的「数据.md」），直接覆盖会误伤用户数据。
+
+    覆盖时：复用同一个 doc_id、版本号 +1、旧向量自动清理
+    （入库前会调 delete_document_chunks）。
     """
     kb = await get_scoped_kb(db, admin, kb_id)
     if not kb.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "知识库不存在或已停用")
-    return await _save_one_document(kb_id, kb, db, file)
+    return await _save_one_document(kb_id, kb, db, file, overwrite_name=overwrite)
 
 
 @router.post("/{kb_id}/documents/batch", response_model=BatchUploadResultOut)
@@ -305,6 +391,10 @@ async def upload_documents_batch(
     db: DbSession,
     admin: AdminUser,
     files: list[UploadFile] = File(..., description="要上传的多个文件"),
+    overwrite: bool = Query(
+        False,
+        description="已有同名文档时是否覆盖。默认 false（返回 409 让前端询问）。",
+    ),
 ):
     """批量上传文档（本组织管理员）。
 
@@ -352,7 +442,9 @@ async def upload_documents_batch(
         name = (f.filename or "未命名文件").strip()
         try:
             async with AsyncSessionLocal() as per_file_db:
-                doc = await _save_one_document(kb_id, kb, per_file_db, f)
+                doc = await _save_one_document(
+                    kb_id, kb, per_file_db, f, overwrite_name=overwrite
+                )
                 # 会话关闭前把需要的字段读出来，避免 detached 后再访问触发懒加载
                 doc_out = DocOut.model_validate(doc)
             succeeded.append(doc_out)
