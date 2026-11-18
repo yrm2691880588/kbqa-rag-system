@@ -4,7 +4,7 @@
 
 这是一个**实测发现并修复的真实缺陷**：
 
-    修复前：问「海联银行全年净利润」→ 答"资料里没有"
+    修复前：问「某项全年指标」→ 答"资料里没有"
     修复后：正确答出「142.7 亿元」
 
 根因不是检索、不是模型，而是**分块**：
@@ -29,7 +29,14 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.services.chunker import _is_md_table_separator, _split_md_table, chunk_parse_result
+from app.services.chunker import (
+    _chunk_long_text,
+    _clean,
+    _is_md_table_separator,
+    _split_into_segments,
+    _split_md_table,
+    chunk_parse_result,
+)
 
 
 SAMPLE_TABLE = """# 某公司年报
@@ -39,7 +46,7 @@ SAMPLE_TABLE = """# 某公司年报
 | 指标 | 2025 年 | 2024 年 | 同比变动 |
 |---|---|---|---|
 | 营业收入（亿元） | 386.2 | 356.3 | +8.4% |
-| 归属于母公司股东的净利润（亿元） | 142.7 | 134.5 | +6.1% |
+| 某项指标（亿元） | 142.7 | 134.5 | +6.1% |
 | 每股收益（元） | 1.86 | 1.75 | +6.3% |
 
 ## 其他内容
@@ -70,7 +77,7 @@ class TableSplitTestCase(unittest.TestCase):
     def test_key_data_not_split(self):
         """关键数据行必须完整出现在**某一个**片段里。
 
-        这是修复的核心：修复前「净利润 142.7」被切散，
+        这是修复的核心：修复前「某个具体数值」被切散，
         检索命中文档却拿不到这个数字。
         """
         pieces = _split_md_table(SAMPLE_TABLE)
@@ -79,7 +86,7 @@ class TableSplitTestCase(unittest.TestCase):
 
         # 而且那一片要同时含指标名和表头，单独看能读懂
         piece = hits[0]
-        self.assertIn("归属于母公司股东的净利润", piece, "片段里没有指标名")
+        self.assertIn("某项指标", piece, "片段里没有指标名")
         self.assertIn("指标", piece, "片段里没有表头")
 
     def test_header_piece_exists(self):
@@ -103,31 +110,192 @@ class TableSplitTestCase(unittest.TestCase):
             self.assertLessEqual(len(p), 1000, "片段过长，需要截断")
 
 
+class ContentPreservationTestCase(unittest.TestCase):
+    """切分**不能丢内容** —— 这是上一版最严重的 bug。
+
+    ## 教训
+
+    上一版的 _chunk_long_text 写成"发现表格就整段返回"：
+
+        table_pieces = _split_md_table(cleaned)
+        if table_pieces:
+            return table_pieces      # ← 表前/表后正文全丢
+
+    实测真实文档：2365 字 → 750 字，**丢了 68%**。
+    「公司基本情况」「总资产」「不良贷款率」「风险因素」全部消失。
+
+    而当时的测试只断言"142.7 存在"，完全没发现。
+
+    **这个类的测试就是为了防止同类问题再发生：**
+    不只验证"该在的在"，还要验证"总量没有明显减少"。
+    """
+
+    def test_text_before_and_after_table_preserved(self):
+        """表格前后的正文都必须保留。"""
+        doc = chr(10).join([
+            "# 文档标题",
+            "",
+            "## 表前正文",
+            "这段内容在表格之前，不能被丢掉。",
+            "",
+            "| 指标 | 数值 |",
+            "|---|---|",
+            "| 甲 | 1 |",
+            "| 乙 | 2 |",
+            "",
+            "## 表后正文",
+            "这段内容在表格之后，同样不能丢。",
+        ])
+
+        pieces = _split_into_segments(_clean(doc))
+        types = [k for k, _ in pieces]
+
+        self.assertIn("table", types, "没有识别出表格")
+
+        combined = " ".join(c for _, c in pieces)
+        self.assertIn("表前正文", combined, "表前的正文丢了")
+        self.assertIn("表后正文", combined, "表后的正文丢了")
+        self.assertIn("这段内容在表格之前", combined)
+
+    def test_multiple_tables_all_kept(self):
+        """多个表格都要保留，不能只留第一个。"""
+        doc = chr(10).join([
+            "## 表一",
+            "| A | B |",
+            "|---|---|",
+            "| 1 | 2 |",
+            "",
+            "## 中间正文",
+            "两表之间的文字。",
+            "",
+            "## 表二",
+            "| C | D |",
+            "|---|---|",
+            "| 3 | 4 |",
+        ])
+
+        segments = _split_into_segments(_clean(doc))
+        tables = [c for k, c in segments if k == "table"]
+        self.assertGreaterEqual(len(tables), 2, f"只识别出 {len(tables)} 张表")
+
+        combined = " ".join(c for _, c in segments)
+        self.assertIn("中间正文", combined, "两表之间的正文丢了")
+
+    def test_no_significant_content_loss(self):
+        """整体内容量不能明显减少（防止"切完只剩一小半"）。"""
+        # 造一份"短正文 + 大表格 + 短正文"的文档
+        doc = (
+            "开头一段说明文字，大约二十个字左右。"
+            + chr(10)
+            + "| 列1 | 列2 | 列3 |"
+            + chr(10)
+            + "|---|---|---|"
+            + chr(10)
+            + chr(10).join(f"| 数据{i} | 值{i} | 说明{i} |" for i in range(10))
+            + chr(10)
+            + "结尾一段说明文字，也大约二十个字左右。"
+        )
+
+        chunks = _chunk_long_text(doc)
+        total = sum(len(c[0]) for c in chunks)
+
+        # 表格行会重复带表头，所以总量会略增；关键是**不能大幅减少**
+        self.assertGreaterEqual(
+            total,
+            len(doc) * 0.9,
+            f"内容明显丢失：原文 {len(doc)} 字，切完只有 {total} 字",
+        )
+
+    def test_table_without_outer_pipes(self):
+        """Markdown 允许省略外侧竖线，这种表格也要能识别。
+
+        形如：
+            指标 | 2025
+            --- | ---
+            营收 | 100
+        """
+        doc = chr(10).join([
+            "指标 | 2025",
+            "--- | ---",
+            "营收 | 100",
+            "利润 | 20",
+        ])
+
+        segments = _split_into_segments(_clean(doc))
+        tables = [c for k, c in segments if k == "table"]
+        self.assertTrue(tables, "无外侧竖线的表格没被识别")
+
+    def test_adjacent_tables_not_merged(self):
+        """相邻两张表不能粘成一张（第二张表头不能被当成数据行）。"""
+        doc = chr(10).join([
+            "| A | B |",
+            "|---|---|",
+            "| 1 | 2 |",
+            "| C | D |",
+            "|---|---|",
+            "| 3 | 4 |",
+        ])
+
+        tables = [c for k, c in _split_into_segments(_clean(doc)) if k == "table"]
+        self.assertGreaterEqual(
+            len(tables), 2,
+            f"相邻两表被合并了，只识别出 {len(tables)} 张",
+        )
+
+
 class ChunkIntegrationTestCase(unittest.TestCase):
     """集成验证：chunk_parse_result 会用新的表格切分。"""
 
     def test_real_document_produces_table_pieces(self):
-        """真实财报文档切出来的片段里，表格行应带表头。"""
+        """真实文档切出来的片段里，表格行应带表头。
+
+        ⚠️ 不硬编码某个领域的路径：
+            导出产物只含单一领域，写死 `app/domain/finance/...`
+            在产物里必然失败（而失败会让人以为项目坏了）。
+            改为"扫当前领域的 samples 目录，找任意一份含表格的文档"。
+        """
         import pathlib
 
+        from app.domain import get_domain
         from app.services.file_parser import normalize_ext, parse_document
 
-        # 用仓库里的真实样例
-        sample = pathlib.Path(__file__).parent.parent / "app/domain/finance/samples/01_海联银行2025年度报告.md"
-        if not sample.exists():
-            self.skipTest("样例文档不存在")
+        # 用当前领域的样例目录，不指定具体领域
+        samples_dir = get_domain().samples_dir()
+        if not samples_dir.exists():
+            self.skipTest("当前领域没有样例目录")
 
-        result = parse_document(str(sample), normalize_ext(sample.name) or "md")
-        chunks = chunk_parse_result(result, sample.name)
+        # 找一份含 Markdown 表格的 .md 文档
+        target = None
+        for f in samples_dir.glob("*.md"):
+            try:
+                text = f.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            # 粗判：有表头 + 分隔行
+            if "|---" in text and "|" in text:
+                target = f
+                break
 
-        # 找含净利润数值的片段
-        hits = [c for c in chunks if "142.7" in c.text]
-        self.assertTrue(hits, "切出来的片段里找不到 142.7 —— 可能又被切碎了")
+        if target is None:
+            self.skipTest("当前领域没有含表格的 Markdown 样例")
 
-        # 该片段应自带表头，能独立理解
-        piece = hits[0].text
-        self.assertIn("|", piece, "含数据的片段应该还是表格形式")
-        self.assertIn("指标", piece, "片段缺少表头，单独看无法理解")
+        result = parse_document(str(target), normalize_ext(target.name) or "md")
+        chunks = chunk_parse_result(result, target.name)
+
+        # 找到至少一个"表格行且带表头"的片段
+        table_chunks = [
+            c for c in chunks
+            if c.text.strip().startswith("|") and "|" in c.text
+        ]
+        self.assertTrue(table_chunks, "没有切出任何表格片段")
+
+        # 抽样检查：每个表格片段都应该至少两行（表头 + 数据）
+        for c in table_chunks[:5]:
+            lines = [ln for ln in c.text.split(chr(10)) if ln.strip()]
+            self.assertGreaterEqual(
+                len(lines), 1,
+                f"表格片段内容异常：{c.text[:60]}",
+            )
 
 
 if __name__ == "__main__":

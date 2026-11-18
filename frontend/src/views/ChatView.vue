@@ -283,7 +283,19 @@ const scopeKbId = ref(0) // 0=全部库；>0=指定库（仅新会话生效）
 const displayMessages = ref<MsgItem[]>([])
 const inputText = ref('')
 const sending = ref(false)
-let abortCtrl: AbortController | null = null
+
+/**
+ * 每个会话各自的请求控制器（按会话 id 存）。
+ *
+ * 为什么不用单个 abortCtrl：
+ *   允许多会话并行生成后，单个变量会被互相踩。
+ *   实测问题：A 会话在后台生成完毕调 finishSending，
+ *   把全局 abortCtrl 置空 —— 而此时它指向的是 B 会话的请求，
+ *   于是 B 点「停止生成」没反应。
+ *
+ * 现在按会话存：结束时只删自己那个，互不影响。
+ */
+const activeControllers = new Map<number, AbortController>()
 
 /**
  * 正在后台生成的回答（按会话 id 索引）。
@@ -347,7 +359,13 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  abortCtrl?.abort()
+  // 组件卸载时中断所有进行中的请求（用户离开页面了，继续跑没意义）
+  for (const ctrl of activeControllers.values()) {
+    ctrl.abort()
+  }
+  activeControllers.clear()
+  // 缓存也清掉，避免残留引用
+  pendingAnswers.clear()
 })
 
 // ---------------- 会话操作 ----------------
@@ -392,16 +410,37 @@ async function switchSession(s: ChatSession, force = false) {
     const msgs = (await listMessages(s.id)).data
     displayMessages.value = msgs.map((m) => toMsgItem(m))
 
-    // 如果这个会话有后台还在生成的回答，把它接上
+    // 如果这个会话有后台还在生成的回答，把它接上。
+    //
+    // ⚠️ 要判断"后端是不是已经存了这条"，否则会出现两条一样的回答。
+    //
+    //   后端有增量落库（_StreamSaver，每 120 字写一次），
+    //   所以切回来时后端可能已经有这条消息了。
+    //   这时再从缓存追加一条，用户就看到两个不同长度但内容相同的回答。
+    //
+    //   判断方式：后端最后一条如果是 assistant，且内容以缓存内容开头，
+    //   说明就是同一条 —— 交给后端版本（它更完整），不追加缓存。
     const pending = pendingAnswers.get(s.id)
     if (pending) {
-      const item = createTypingMessage()
-      item.key = pending.key
-      item.content = pending.content
-      item.thinking = pending.thinking
-      item.citations = pending.citations as never
-      item.typing = !pending.done
-      displayMessages.value.push(item)
+      const last = displayMessages.value[displayMessages.value.length - 1]
+      const backendHasIt =
+        last &&
+        last.role === 'assistant' &&
+        pending.content &&
+        (last.content === pending.content || last.content.startsWith(pending.content))
+
+      if (backendHasIt) {
+        // 后端版本更新，用它；缓存就此作废
+        pendingAnswers.delete(s.id)
+      } else {
+        const item = createTypingMessage()
+        item.key = pending.key
+        item.content = pending.content
+        item.thinking = pending.thinking
+        item.citations = pending.citations as never
+        item.typing = !pending.done
+        displayMessages.value.push(item)
+      }
     }
 
     await scrollBottom(false)
@@ -441,6 +480,14 @@ async function doDelete() {
   try {
     await deleteSession(t.id)
     sessions.value = sessions.value.filter((x) => x.id !== t.id)
+
+    // 清掉这个会话的后台缓存。
+    //
+    // 为什么必须清：pendingAnswers 是按会话 id 存的 Map，
+    // 不清的话删掉的会话会一直占着内存（含完整回答文本），
+    // 用户长时间使用后内存只增不减 —— 典型的 Map 泄漏。
+    pendingAnswers.delete(t.id)
+
     if (currentSession.value?.id === t.id) {
       currentSession.value = null
       displayMessages.value = []
@@ -507,9 +554,13 @@ async function send(opts: { question?: string; regenerate?: boolean } = {}) {
     if (currentSession.value?.id === sid) {
       sending.value = false
     }
-    abortCtrl = null
+
+    // ⚠️ 只删**自己这个会话**的控制器。
+    //    原来写的是 `abortCtrl = null`（全局置空），
+    //    在多会话并行时会清掉别人的控制器，导致别人的"停止生成"失效。
+    activeControllers.delete(sid)
   }
-  abortCtrl = streamChat(
+  const _ctrl = streamChat(
     sid,
     q,
     (ev) => {
@@ -616,10 +667,18 @@ async function send(opts: { question?: string; regenerate?: boolean } = {}) {
     () => {},          // onComplete：本轮不需要额外收尾，留空
     { regenerate: isRegen },
   )
+
+  // 登记控制器：让「停止生成」能找到**这个会话**的请求
+  if (_ctrl) activeControllers.set(sid, _ctrl)
 }
 
 function stopGenerate() {
-  abortCtrl?.abort()
+  // 只中断**当前会话**的请求 —— 别的会话可能在后台正常生成，不该被牵连
+  const sid = currentSession.value?.id
+  if (sid) {
+    activeControllers.get(sid)?.abort()
+    activeControllers.delete(sid)
+  }
   const item = [...displayMessages.value].reverse().find((m) => m.typing)
   if (item) {
     item.typing = false
@@ -628,6 +687,18 @@ function stopGenerate() {
       item.noHitText = '已停止生成'
     }
   }
+
+  // ⚠️ 必须把缓存标记成完成。
+  //
+  // 不标记的后果（改 pendingAnswers 时发现的）：
+  //   · pendingHere.done 一直是 false
+  //   · 切回这个会话时 sending 仍显示"正在回答中"
+  //   · 发送守卫（按会话判断）会一直拦住新提问 —— 用户以为卡死了
+  if (sid) {
+    const pending = pendingAnswers.get(sid)
+    if (pending) pending.done = true
+  }
+
   sending.value = false
 }
 

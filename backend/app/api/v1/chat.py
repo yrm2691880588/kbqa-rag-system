@@ -143,8 +143,7 @@ class _StreamSaver:
                         return
                     m.content = content
                     m.citations = self.citations or None
-                    if final:
-                        m.latency_ms = getattr(m, "latency_ms", None)
+                    # 延迟由调用方在最终版本上单独设置，这里不碰
 
                 sess = await db.get(ChatSession, self.session_id)
                 if sess:
@@ -153,11 +152,25 @@ class _StreamSaver:
                     sess.updated_at = _dt.datetime.now(_dt.timezone.utc)
 
                 await db.commit()
-            self.last_len = len(text)
         except Exception as exc:  # noqa: BLE001
-            # 增量保存失败不应打断回答生成 —— 只是"这一版没存上"，
-            # 下一批还会再试。
+            # 增量保存失败不应打断回答生成 —— 只是"这一版没存上"。
+            #
+            # ⚠️ 但计数器**必须**前进，否则会雪崩：
+            #
+            #   last_len 不更新的后果（实测确认）：
+            #     第一次 flush 失败 → last_len 还是 0
+            #     下一个字进来 → 又满足阈值 → 再 flush → 又失败
+            #     → **每来一个字就尝试写一次数据库**
+            #
+            #   数据库本来就慢/挂的时候，这会把压力放大几百倍，
+            #   让"慢"变成"彻底不可用"。
+            #
+            #   代价是：失败的这一批内容下次不会自动补写，
+            #   但正常结束时 finish() 会写最终版，不会真的丢。
             logger.warning("增量保存失败（不影响回答）：%s", exc)
+
+        # 无论成功失败都推进计数器：成功是为了节流，失败是为了防止雪崩
+        self.last_len = len(text)
 
     async def finish(self, text: str) -> int | None:
         """正常结束时的最终写入。返回消息 id（供前端点赞用）。"""
@@ -417,7 +430,20 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                     ):
                         if event == "meta":
                             citations = data.get("citations", [])
-                            stream_saver = _StreamSaver(session_id, citations)
+                            # ⚠️ 只在第一次创建 saver，不能无条件覆盖。
+                            #
+                            # 为什么要判空：saver 里保存着 message_id（已经写过库的那条消息）。
+                            # 如果 meta 事件发了两次，第二次会新建一个 saver，
+                            # message_id 归零 → 正常结束时会再 INSERT 一条
+                            # → 库里同一个回答出现两次。
+                            #
+                            # 目前上游只发一次 meta，但这是**隐式约定**：
+                            # 将来改成"边检索边发"就会踩坑。显式判空更稳。
+                            if stream_saver is None:
+                                stream_saver = _StreamSaver(session_id, citations)
+                            else:
+                                # 第二次及以后只更新引用，不重建 saver
+                                stream_saver.citations = citations or []
                             yield _sse("meta", data)
                         elif event in ("thinking", "answer"):
                             if event == "answer":
@@ -526,11 +552,9 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                 if assistant_msg_id is not None:
                     yield _sse("saved", {"message_id": assistant_msg_id})
             except GeneratorExit:
-                logger.warning(
-                    "DEBUG 诊断：捕获 GeneratorExit，answer_buf 长度=%d，"
-                    "内容前 40 字=%r",
-                    len(answer_buf), "".join(answer_buf)[:40],
-                )
+                # 只记长度，**不记内容** —— 回答里可能有用户隐私
+                # （财报数字、联系人信息等），不该进日志。
+                logger.debug("客户端断开时已生成 %d 段内容", len(answer_buf))
                 # 客户端主动断开（关页面/切会话/点停止生成）时，生成器被关闭会抛这个。
                 # 不能当成错误处理，也不能向外 yield 任何东西（流已经没了）。
                 logger.info("客户端已断开，停止生成（token 用量在 finally 里补记）")
@@ -545,26 +569,44 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                 #
                 #   为什么不保存也无所谓？不行 —— 用户切回来只看到自己的提问，
                 #   会以为回答被"吞"了（实测反馈过）。
-                _bg = asyncio.create_task(
-                    _save_partial_answer(session_id, answer_buf, citations, started)
-                )
+                # 复用增量保存器（如果有）：它已经有 message_id，
+                # 再走 _save_partial_answer 会多插一条。
+                _partial = "".join(answer_buf).strip()
+                if stream_saver is not None and _partial:
+                    _bg = asyncio.create_task(stream_saver.finish(_partial))
+                else:
+                    _bg = asyncio.create_task(
+                        _save_partial_answer(session_id, answer_buf, citations, started)
+                    )
                 # 持有引用防止被 GC 提前回收（asyncio 的已知陷阱：
                 # 只 create_task 不保存引用，任务可能在中途被垃圾回收）
                 _BG_TASKS.add(_bg)
                 _bg.add_done_callback(_BG_TASKS.discard)
                 raise
             except asyncio.CancelledError:
-                logger.warning(
-                    "DEBUG 诊断：捕获 CancelledError，answer_buf 长度=%d",
-                    len(answer_buf),
-                )
+                logger.debug("问答流被取消时已生成 %d 段内容", len(answer_buf))
                 # 同上，但这是"服务端取消任务"的路径（如超时、进程退出）。
+                #
+                # 这里可以正常 await（不是生成器销毁路径），
+                # 所以优先复用增量保存器 —— 它已经写过同一条消息，
+                # 再调 _save_partial_answer 会**多插一条**，造成重复。
                 logger.info("问答流被取消（token 用量在 finally 里补记）")
-                await _save_partial_answer(session_id, answer_buf, citations, started)
+                partial_text = "".join(answer_buf).strip()
+                try:
+                    if stream_saver is not None and partial_text:
+                        # 复用：UPDATE 那一条，去掉"生成中"标注
+                        await stream_saver.finish(partial_text)
+                    elif partial_text:
+                        # 还没建 saver（答案很短没触发 meta 之外的写入）
+                        await _save_partial_answer(
+                            session_id, answer_buf, citations, started
+                        )
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning("中断保存失败：%s", _e)
                 raise
             except Exception as _exc:
-                logger.warning(
-                    "DEBUG 诊断：捕获 %s，answer_buf 长度=%d",
+                logger.debug(
+                    "问答流异常 %s，已生成 %d 段内容",
                     type(_exc).__name__, len(answer_buf),
                 )
                 logger.exception("问答流处理异常")

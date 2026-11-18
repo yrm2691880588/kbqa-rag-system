@@ -67,9 +67,9 @@ $env:DOMAIN="ecommerce"; python run_tests.py
 
 | DOMAIN | Core 用例 | 领域用例 |
 |---|---|---|
-| `generic` | 581 | 0 |
-| `ecommerce` | 581 | 18 |
-| `finance` | 581 | 10 |
+| `generic` | 617 | 0 |
+| `ecommerce` | 617 | 18 |
+| `finance` | 617 | 10 |
 
 > 基线会随功能增加而变化。如果你加了测试，请顺手更新这张表 ——
 > 数字对不上的话，下一个人会怀疑是自己弄坏了什么。
@@ -86,6 +86,8 @@ $env:DOMAIN="ecommerce"; python run_tests.py
 | `tests/test_intent_routing.py` | 意图分流（闲聊/违规/实时/超范围/正常），重点验证不误伤 |
 | `tests/test_domain_data_isolation.py` | 领域字段、唯一约束、隔离 |
 | `tests/test_embedding_batch.py` | 向量化批次上限 |
+| `tests/test_table_chunking.py` | Markdown 表格切分 + **正文不丢失** |
+| `tests/test_stream_save.py` | 流式回答增量落库、中断处理 |
 
 **特别注意**：`test_tools.py` 里的注入测试是安全边界，不能为了让它变绿而放宽校验。
 
