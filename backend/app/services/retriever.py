@@ -34,6 +34,70 @@ def _score_of(hit: dict) -> float:
         return float(hit.get("rerank_score") or 0.0)
     return float(hit.get("score", 0.0) or 0.0)
 
+# RRF 的平滑常数。原论文（Cormack et al. 2009）的经验值。
+# 作用：压平"第 1 名 vs 第 2 名"的差距，让"两路都排中游"能超过"一路独苗第一"。
+_RRF_K = 60
+
+
+def rrf_fuse(
+    result_lists: list[list[dict]],
+    top_k: int,
+) -> list[dict]:
+    """把多路检索结果用 RRF（倒数排名融合）合并。
+
+    ## 为什么不用分数相加
+
+        两路分数不可比：
+          向量检索 = 余弦相似度（0~1）
+          关键词检索 = 固定 1.0（或 BM25 分数，范围不定）
+        直接相加会让某一路永远占优。
+
+    ## RRF 怎么算
+
+        score(doc) = Σ  1 / (k + rank_i)
+
+        只用名次，不用绝对分数。被多路同时命中的文档得分最高。
+
+    Args:
+        result_lists: 多路结果，每路是 search() 返回的那种列表。
+        top_k: 融合后保留多少条。
+
+    Returns:
+        融合后的列表，按 RRF 得分降序。
+
+    Note:
+        `_rrf_score` 是额外加的字段，用于调试；
+        原有的 score 字段保持不变（下游可能要用）。
+    """
+    if not result_lists:
+        return []
+
+    # 用 (doc_id, chunk_index) 做唯一键：
+    # 同一个片段在不同路里的 id 可能不同（scroll 的 id 是 uuid），
+    # 但 (doc_id, chunk_index) 是稳定的业务标识。
+    scores: dict[tuple, float] = {}
+    by_key: dict[tuple, dict] = {}
+
+    for hits in result_lists:
+        for rank, h in enumerate(hits, start=1):
+            key = (h.get("doc_id"), h.get("chunk_index"))
+            # 有些来源可能没有 chunk_index，退回用 text 前 80 字做键
+            if key[1] is None:
+                key = (h.get("doc_id"), (h.get("text") or "")[:80])
+            scores[key] = scores.get(key, 0.0) + 1.0 / (_RRF_K + rank)
+            # 保留第一次见到的原始对象（后续只加分数）
+            by_key.setdefault(key, h)
+
+    fused = []
+    for key, s in scores.items():
+        h = dict(by_key[key])
+        h["_rrf_score"] = s
+        fused.append(h)
+
+    fused.sort(key=lambda x: x["_rrf_score"], reverse=True)
+    return fused[:top_k]
+
+
 
 def _doc_level_denoise(hits: list[dict]) -> list[dict]:
     """文档级去噪：去掉"整体不相关"的文档，并压缩同一文档内的凑数片段。
@@ -166,11 +230,44 @@ async def retrieve(question: str, kb_ids: list[int] | None = None, top_k: int | 
         return []
     # 2) 多召回：先取回宽松的候选集（数量取配置中的较大值）
     candidate_k = max(top_k or settings.retrieval_top_k, settings.retrieval_candidate_k)
-    hits = await vector_store.search(
+    vec_hits = await vector_store.search(
         query_vector=vecs[0],
         kb_ids=kb_ids,
         top_k=candidate_k,
     )
+
+    # 2.1) 关键词检索（混合检索的另一路）
+    #
+    # 为什么需要（实测依据）：
+    #   向量检索对"表格里的一行"这种短文本区分度不高 ——
+    #   「净利润」和「净息差」在语义上都很接近用户的问法，
+    #   但用户要的是精确的那一个数字。
+    #   实测：含 `2.12%` 的片段在向量检索里排第 20 位，被其他财务指标挤下去。
+    #
+    # 关键词检索按字面命中，正好补这个短板。
+    #
+    # 为什么失败不影响主流程：这一路是增强，挂了就只用向量结果。
+    kw_hits = []
+    if settings.hybrid_search_enabled:
+        try:
+            kw_hits = await vector_store.keyword_search(
+                query=question, kb_ids=kb_ids, top_k=candidate_k
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("关键词检索异常，仅用向量结果：%s", e)
+            kw_hits = []
+
+        if kw_hits:
+            logger.info(
+                "混合检索「%s」：向量 %d 条 + 关键词 %d 条 → RRF 融合",
+                question[:30], len(vec_hits), len(kw_hits),
+            )
+            # RRF 融合：只用名次，不用绝对分数（两路分数不可比）
+            hits = rrf_fuse([vec_hits, kw_hits], top_k=candidate_k)
+        else:
+            hits = vec_hits
+    else:
+        hits = vec_hits
     # 2.5) 重排：把粗筛出来的候选交给重排模型精挑一遍。
     #      注意顺序 —— 重排要放在"文档级去噪"**之前**：
     #      去噪是靠"分数之间的相对比例"来判断哪篇文档不相关的，

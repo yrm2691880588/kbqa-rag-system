@@ -17,9 +17,12 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchAny,
+    MatchText,
     MatchValue,
     PayloadSchemaType,
     PointStruct,
+    TextIndexParams,
+    TokenizerType,
     VectorParams,
 )
 
@@ -68,6 +71,31 @@ async def ensure_collection() -> None:
             )
         except Exception:
             pass
+
+    # 全文索引：支撑关键词检索（混合检索的另一路）。
+    #
+    # 为什么用 multilingual tokenizer：
+    #   中文没有空格，默认的 word tokenizer 会把整句当一个 token，
+    #   等于完全搜不到。multilingual 能正确切分中文。
+    #   实测：查「净息差」「不良贷款率」都能命中。
+    #
+    # 为什么 min_token_len=1：
+    #   财务场景常有单字有意义的情况（如「元」），
+    #   设成 2 会漏掉。代价是索引稍大，可接受。
+    try:
+        await client.create_payload_index(
+            settings.qdrant_collection,
+            "text",
+            TextIndexParams(
+                type="text",
+                tokenizer=TokenizerType.MULTILINGUAL,
+                min_token_len=1,
+                max_token_len=30,
+                lowercase=True,
+            ),
+        )
+    except Exception:
+        pass  # 已存在
 
 
 def _point_id(doc_id: int, chunk_index: int) -> str:
@@ -191,6 +219,282 @@ async def list_document_chunks(doc_id: int, limit: int = 200) -> list[dict]:
     items.sort(key=lambda x: (x["chunk_index"] is None, x["chunk_index"] or 0))
     return items
 
+
+# 中文疑问句里常见的"无信息"成分。
+# 去掉它们之后剩下的才是真正的检索意图。
+_QUESTION_STOPWORDS = (
+    "是多少", "是什么", "是哪些", "怎么样", "怎么办", "为什么",
+    "请问", "请", "帮我", "帮忙", "告诉我",
+    "什么", "哪些", "哪个", "哪家", "哪位", "多少", "几个", "怎样", "怎么",
+    "如何", "是否", "有没有", "能不能", "可不可以", "可以", "需要",
+    "吗", "呢", "吧", "啊", "呀", "的", "了", "是", "有",
+    # 单字介词/连词：切 n-gram 时要当作分隔符，
+    # 否则会切出「委会对渠」这种碎片
+    "对", "在", "和", "与", "及", "或", "把", "被", "给", "从", "向", "为",
+    # 常见动词/形式词：它们不是检索对象，切 n-gram 时要断开
+    "面临", "存在", "属于", "包括", "包含", "涉及", "关于", "对于", "如何",
+)
+
+# 分隔符：把问句切成若干候选词
+_SPLIT_CHARS = "，。？、；：！,.;:?! \t" + chr(10)
+
+
+def extract_keywords(question: str, max_kw: int = 8) -> list[str]:
+    """从问句里提取可用于全文检索的关键词。
+
+    ## 为什么需要这一步
+
+        Qdrant 的 MatchText 要求"完整包含传入的字符串"。
+        直接传整个问句（「海联银行的净息差是多少？」）匹配不到 ——
+        文档里只有「净息差」，没有那句完整的话。
+
+        实测：
+          keyword_search("海联银行的净息差是多少？") → 0 条
+          keyword_search("净息差")                  → 7 条
+
+    ## 提取策略
+
+        1. 按标点/空白切成片段
+        2. 去掉疑问停用词
+        3. **对长片段切 n-gram**（这一步是关键）
+        4. 过滤长度 < 2 的碎片
+        5. 去重，限制总数
+
+    ## 为什么必须切 n-gram
+
+        实测：「投委会对渠道扩张是怎么决定的？」
+        去掉停用词后得到「投委会对渠道扩张」这 8 个字，
+        但文档里写的是「渠道扩张方案」——
+        「投委会对渠道扩张」不是任何文档的子串，匹配不到。
+
+        切 2~4 字子串后，能得到「渠道扩张」，
+        这才是文档里真实存在的词。
+
+    ## 为什么只切 2~4 字
+
+        中文实词以 2~4 字为主（"净息差"3字、"不良贷款率"5字）。
+        切 1 字会产生大量噪音（"的""是"），切 5 字以上命中率低。
+
+    Args:
+        question: 用户问题原文。
+        max_kw: 最多返回几个关键词。
+
+    Returns:
+        关键词列表（可能为空）。
+    """
+    q = (question or "").strip()
+    if not q:
+        return []
+
+    # ---- 1) 按分隔符切片段 ----
+    parts: list[str] = []
+    buf = ""
+    for ch in q:
+        if ch in _SPLIT_CHARS:
+            if buf:
+                parts.append(buf)
+            buf = ""
+        else:
+            buf += ch
+    if buf:
+        parts.append(buf)
+
+    # ---- 2) 去停用词 ----
+    cleaned: list[str] = []
+    for part in parts:
+        p2 = part
+        for sw in _QUESTION_STOPWORDS:
+            p2 = p2.replace(sw, " ")
+        for piece in p2.split():
+            piece = piece.strip()
+            if len(piece) >= 2:
+                cleaned.append(piece)
+
+    # ---- 3) 长片段切 n-gram（关键步骤）----
+    #
+    # ⚠️ 只切"实词区间"，不切整个长句。
+    #
+    #   第一版对整个长片段暴力切 2~4 字，
+    #   结果「投委会对渠道扩张」切出了
+    #   ['委会对渠', '会对渠道', '对渠道扩'] 这类无意义碎片 ——
+    #   它们既不在文档里，又白白占用检索名额。
+    #
+    #   现在改成：先找出片段里"看起来是实词"的连续区间，只对区间切。
+    #   实词区间的判定：不含停用词的最长连续子串。
+    expanded: list[str] = []
+    for piece in cleaned:
+        if len(piece) <= 4:
+            expanded.append(piece)
+            continue
+
+        # 保留原片段（万一整段能命中）
+        expanded.append(piece)
+
+        # 找出"实词区间"：不含任何停用词的连续段
+        segments: list[str] = []
+        seg = ""
+        i = 0
+        while i < len(piece):
+            # 检查从 i 开始是否匹配某个停用词
+            matched = None
+            for sw in _QUESTION_STOPWORDS:
+                if sw and piece.startswith(sw, i):
+                    matched = sw
+                    break
+            if matched:
+                if seg:
+                    segments.append(seg)
+                seg = ""
+                i += len(matched)
+            else:
+                seg += piece[i]
+                i += 1
+        if seg:
+            segments.append(seg)
+
+        # 只对实词区间切 n-gram
+        for s in segments:
+            s = s.strip()
+            if len(s) < 2:
+                continue
+            if len(s) <= 4:
+                expanded.append(s)
+                continue
+            for n in (4, 3, 2):
+                for j in range(len(s) - n + 1):
+                    expanded.append(s[j : j + n])
+
+    # ---- 4) 去重保序 + 限制数量 ----
+    # 长的优先（长的更具体，命中更准）
+    seen: set = set()
+    out: list[str] = []
+    for kw in sorted(expanded, key=len, reverse=True):
+        if kw in seen:
+            continue
+        seen.add(kw)
+        out.append(kw)
+        if len(out) >= max_kw:
+            break
+
+    return out
+
+async def keyword_search(
+    query: str,
+    kb_ids: list[int] | None = None,
+    top_k: int | None = None,
+) -> list[dict]:
+    """关键词检索：按字面命中找片段（混合检索的另一路）。
+
+    ## 与向量检索的分工
+
+        向量检索：语义相近（"净利润"能匹配"利润总额"）
+        关键词检索：字面精确（"2.12"只匹配含 2.12 的片段）
+
+        两者互补。向量找"意思对"的，关键词找"字面有"的。
+
+    ## 为什么必须用索引过滤，不能 scroll 后置过滤
+
+        第一版写成"scroll 拿一批 → Python 判断包含"，
+        结果查「市盈率」返回 0 条 —— 因为 scroll 拿的是
+        **集合里前 N 条**，不是"匹配查询的前 N 条"。
+        后置过滤等于在小样本里碰运气。
+
+        现在用 MatchText 让数据库做筛选，返回的才是真正匹配的。
+
+    ## 已知限制
+
+        纯数字（如「8642」）在 Qdrant 全文索引里匹配不到 ——
+        multilingual tokenizer 对纯数字的处理不同。
+        所以这一路只是**补充**，不能替代向量检索。
+
+    Args:
+        query: 用户问题原文。
+        kb_ids: 限定知识库；None=不限制。
+        top_k: 返回条数上限。
+
+    Returns:
+        命中列表，格式与 `search()` 一致。
+        出错时返回空列表 —— 关键词检索失败不应该让整个问答挂掉。
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    client = get_client()
+    limit = int(top_k or settings.retrieval_top_k)
+
+    # 过滤条件：领域/组织范围（kb_ids）+ 全文匹配
+    must: list = []
+
+    if kb_ids is not None:
+        if not kb_ids:
+            return []
+        if len(kb_ids) == 1:
+            must.append(FieldCondition(key="kb_id", match=MatchValue(value=kb_ids[0])))
+        else:
+            must.append(FieldCondition(key="kb_id", match=MatchAny(any=kb_ids)))
+
+    # ⚠️ 不能用整个问句去匹配。
+    #
+    #   MatchText 要求"完整包含传入的字符串"，而问句是
+    #   「海联银行的净息差是多少？」，文档里只有「净息差」——
+    #   前者不是后者的子串，匹配不到（实测 0 条）。
+    #
+    #   所以先提取关键词，逐个匹配后合并。
+    kws = extract_keywords(q)
+    if not kws:
+        # 提不出关键词（比如纯符号）→ 退回整句匹配，给一次机会
+        kws = [q]
+
+    seen_ids: set = set()
+    hits: list = []
+    per_kw = max(3, limit // max(1, len(kws)))   # 每个词分到的名额
+
+    for kw in kws:
+        conds = list(must)
+        conds.append(FieldCondition(key="text", match=MatchText(text=kw)))
+        try:
+            batch, _ = await client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=Filter(must=conds),
+                limit=per_kw,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("关键词「%s」检索失败：%s", kw, e)
+            continue
+
+        for h in batch:
+            if h.id in seen_ids:
+                continue
+            seen_ids.add(h.id)
+            hits.append(h)
+
+    if not hits:
+        return []
+
+    out: list[dict] = []
+    for h in hits:
+        payload = h.payload or {}
+        text = str(payload.get("text") or "")
+        if not text:
+            continue
+        out.append({
+            "id": str(h.id),
+            # 关键词命中的分数固定为 1.0：
+            # RRF 只用名次，不看绝对值，所以这里给什么都行。
+            "score": 1.0,
+            "text": text,
+            "doc_id": payload.get("doc_id"),
+            "doc_name": payload.get("doc_name"),
+            "page": payload.get("page"),
+            "kb_id": payload.get("kb_id"),
+            "chunk_index": payload.get("chunk_index"),
+            "_keyword_hit": True,
+        })
+
+    return out
 
 async def search(
     query_vector: list[float],
