@@ -30,6 +30,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import logging
+import uuid
 from typing import Any
 
 logger = logging.getLogger("kbqa.services.export")
@@ -37,7 +38,8 @@ logger = logging.getLogger("kbqa.services.export")
 # 表头。顺序就是导出文件的列顺序。
 _HEADERS = [
     "序号",
-    "时间",
+    "提问时间",
+    "回答时间",
     "提问",
     "回答",
     "引用来源",
@@ -119,23 +121,47 @@ def build_session_xlsx(
     """
     try:
         return _build(session_title, messages, exported_at)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("导出会话失败：%s", exc)
-        return _build_error(str(exc))
+    except Exception:  # noqa: BLE001
+        # ⚠️ 必须用 exception 而不是 warning（踩过的坑）。
+        #
+        # `logger.warning("...%s", exc)` 只记录错误消息，**不带堆栈**。
+        # 而这个函数是"吞掉所有异常"的设计 ——
+        # 一旦真的有 bug，开发者只能看到一句"导出失败：xxx"，
+        # 完全不知道是哪一行炸的，排查时等于抓瞎。
+        #
+        # logger.exception 会带上完整 traceback，是"吞异常"场景的标准做法。
+        logger.exception("导出会话失败（用户会收到一个说明文件）")
+
+        # ⚠️ 只给用户一个可追查的编号，**不回显异常原文**。
+        #
+        # 为什么：`str(exc)` 里可能含本机路径、SQL 片段、内部变量名。
+        # 把这些写进用户能下载的文件，等于向用户泄露实现细节。
+        # 用户真需要反馈时，报这个编号即可，我们能从日志定位。
+        ref = uuid.uuid4().hex[:8]
+        logger.warning("导出失败编号（用户可见）：%s", ref)
+        return _build_error(ref)
 
 
-def _build_error(reason: str) -> bytes:
-    """生成一个"导出失败"的 Excel（而不是让请求 500）。"""
+def _build_error(ref: str) -> bytes:
+    """生成一个"导出失败"的 Excel（而不是让请求 500）。
+
+    Args:
+        ref: 错误编号（8 位十六进制）。只给编号，不给异常原文 ——
+            异常信息可能含本机路径、SQL 片段等实现细节，
+            写进用户能下载的文件属信息泄露。
+    """
     from openpyxl import Workbook
 
     wb = Workbook()
     ws = wb.active
     ws.title = "导出失败"
     ws.append(["导出失败"])
-    ws.append(["原因", reason])
-    ws.append(["建议", "请重试；如果一直失败，请联系管理员查看服务端日志。"])
+    ws.append(["说明", "生成文件时出错，请稍后重试。"])
+    ws.append(["错误编号", ref])
+    ws.append(["", "如果反复失败，请把上面这行编号提供给管理员，便于定位。"])
+    ws.append(["", "在此期间，你可以直接在对话界面查看完整记录。"])
     ws.column_dimensions["A"].width = 12
-    ws.column_dimensions["B"].width = 80
+    ws.column_dimensions["B"].width = 60
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -184,6 +210,7 @@ def _build(
                     [
                         row_no,
                         _fmt_time(pending_q.get("created_at")),
+                        "",   # 未生成回答 → 回答时间留空
                         pending_q.get("content") or "",
                         "（本轮未生成回答）",
                         "",
@@ -205,7 +232,8 @@ def _build(
         ws.append(
             [
                 row_no,
-                _fmt_time(m.get("created_at") or q.get("created_at")),
+                _fmt_time(q.get("created_at")),
+                _fmt_time(m.get("created_at")),
                 q.get("content") or "",
                 m.get("content") or "",
                 _fmt_citations(m.get("citations")),
@@ -224,6 +252,7 @@ def _build(
             [
                 row_no,
                 _fmt_time(pending_q.get("created_at")),
+                "",   # 未生成回答 → 回答时间留空
                 pending_q.get("content") or "",
                 "（本轮未生成回答）",
                 "",
@@ -241,7 +270,8 @@ def _build(
     #   设了宽度和 wrap_text 后，用户打开就能看到完整内容。
     widths = {
         "序号": 6,
-        "时间": 20,
+        "提问时间": 20,
+        "回答时间": 20,
         "提问": 40,
         "回答": 60,
         "引用来源": 40,
@@ -254,7 +284,7 @@ def _build(
         ws.column_dimensions[get_column_letter(idx)].width = widths.get(name, 16)
 
     # 长文本列允许换行（序号/时间/耗时这类不需要）
-    wrap_cols = {3, 4, 5, 8}
+    wrap_cols = {4, 5, 6, 9}
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
         for cell in row:
             if cell.column in wrap_cols:

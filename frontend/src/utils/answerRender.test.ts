@@ -48,7 +48,7 @@ test('escapeHtml 空输入返回空串', () => {
 })
 
 test('renderCitations 把 [1] 变成可点击角标', () => {
-  const html = renderCitations('净利润 142.7 亿[1]')
+  const html = renderCitations('利润 142.7 亿[1]')
   assert.ok(html.includes('cite-sup'), '应生成 cite-sup 角标')
   assert.ok(html.includes('data-idx="1"'), '应带 data-idx 供点击定位')
 })

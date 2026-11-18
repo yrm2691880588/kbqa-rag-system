@@ -91,12 +91,12 @@ class OutOfScopeTestCase(unittest.TestCase):
     def test_business_questions_not_blocked(self):
         """业务问题绝不能被误判（比漏判严重得多）。"""
         cases = [
-            "海联银行净利润多少",
+            "某公司利润多少",
             "报销制度怎么规定",
             "研发中心负责人是谁",
             "三家营收对比",
             "预算执行率多少",
-            "启明科技毛利率",
+            "另一公司毛利率",
             "这个费用能不能报",
             "审批流程是什么",
             "合同审批要多久",
@@ -209,12 +209,12 @@ class VerifyPromptNeutralTestCase(unittest.TestCase):
     def test_verify_prompt_has_no_domain_terms(self):
         """ADR-0001：Core 不能出现领域专有名词。
 
-        最初写的是"回答是否答非所问（问净利润却答营收）" ——
+        最初写的是"回答是否答非所问（问利润却答营收）" ——
         换医疗领域就必须改 Core 代码。
         """
         from app.services.answer_verify import _VERIFY_SYSTEM
 
-        forbidden = ["净利润", "营收", "毛利率", "股价", "商品", "诊断"]
+        forbidden = ["利润", "营收", "毛利率", "股价", "商品", "诊断"]
         for w in forbidden:
             with self.subTest(word=w):
                 self.assertNotIn(

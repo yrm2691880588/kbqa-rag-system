@@ -4,7 +4,7 @@
 
 向量检索对"表格里的一行"区分度很低。实测两个典型失败：
 
-    「某公司 2025 年前三季度的营业收入合计是多少？」
+    「某公司某个季度区间的某个指标合计是多少？」
       → 需要把 Q1+Q2+Q3 加起来，检索做不到"聚合"
 
     「哪个对象的人数最多？」
@@ -66,8 +66,6 @@ logger = logging.getLogger("kbqa.tools.table_query")
 _MAX_ROWS = 50
 
 # 允许聚合的列类型判定用不到，这里只做字符串/数字的粗分
-_NUMERIC_HINT = ("收入", "利润", "资产", "负债", "金额", "预算", "支出",
-                 "人数", "增速", "率", "ROE", "ROA", "代码", "数")
 
 
 def _looks_numeric(value: str) -> bool:
@@ -100,6 +98,20 @@ def _fmt(num: float) -> str:
     return f"{num:.4f}".rstrip("0").rstrip(".")
 
 
+class _BadColumn(Exception):
+    """筛选条件里的列名不存在。
+
+    单独定义一个异常类型（而不是直接 RuntimeError），
+    是为了让调用方能区分"列名写错"和"其他读取错误"，
+    给出不同的错误提示。
+    """
+
+    def __init__(self, column: str, available: list[str]):
+        self.column = column
+        self.available = available
+        super().__init__(f"列名不存在：{column}")
+
+
 class TableQueryTool:
     """查询 Excel 表格里的精确数据。
 
@@ -120,8 +132,8 @@ class TableQueryTool:
     description = (
         "查询 Excel 表格里的精确数据。当问题涉及以下情况时使用："
         "① 需要具体数字（某个指标的值、人数、金额）；"
-        "② 需要把多个数值加起来（如「前三季度营收总和」）；"
-        "③ 需要按条件筛选（如「某个部门的预算执行率」）；"
+        "② 需要把多个数值加起来（如「多个数值相加」）；"
+        "③ 需要按条件筛选（如「某个对象的某项指标」）；"
         "④ 需要比较多个对象的同一个指标。"
         "如果问题是要理解概念、找制度条款、看文字说明，不要调用本工具，"
         "直接用知识库资料回答即可。"
@@ -147,7 +159,7 @@ class TableQueryTool:
             "filters": {
                 "type": "object",
                 "description": (
-                    '筛选条件，形如 {"公司名称": "某公司", "期间": ["Q1","Q2"]}。'
+                    '筛选条件，形如 {"主体名称": "某公司", "期间": ["Q1","Q2"]}。'
                     "值是字符串表示精确匹配，是数组表示「命中任一即可」。"
                     "不传则不过滤（返回全部行，最多 50 行）。"
                 ),
@@ -182,7 +194,7 @@ class TableQueryTool:
 
         # 调用方注入的上下文：可用表格文件列表
         #
-        # 结构：[{"kb_id": 3, "doc_id": 7, "name": "08_财务状况数据表.xlsx"}]
+        # 结构：[{"kb_id": 3, "doc_id": 7, "name": "某数据表.xlsx"}]
         context = kwargs.get("_context") or {}
         tables = context.get("tables") or []
 
@@ -238,8 +250,8 @@ class TableQueryTool:
         ## 为什么要过滤"尾部说明行"
 
             真实 Excel 常在数据末尾写几行备注，例如：
-                说明：ROE 与 ROA 均用平均余额计算。
-                银行资产负债率 90% 以上属行业正常水平...
+                说明：该指标用平均值计算。
+                某行业该指标普遍偏高 以上属行业正常水平...
 
             这些行的特点是：只有第一列有内容，其余列全空。
             不去掉会导致：
@@ -249,7 +261,7 @@ class TableQueryTool:
 
             判定：整行只有第 1 个单元格非空 → 视为备注，跳过。
             这个规则不完美（如果数据本身只有一列，会误杀），
-            但财务表格至少 3~4 列，误杀风险很低。
+            但数据表格至少 3~4 列，误杀风险很低。
             为了安全，只在**表头列数 >= 3** 时才启用这个过滤。
         """
         header: list[str] = []
@@ -263,10 +275,22 @@ class TableQueryTool:
                 continue
 
             # 尾部备注行过滤（仅多列表格启用）
+            #
+            # ⚠️ 必须先判空再取字符（踩过的真 bug）：
+            #   原来写 `not vals[0][0].isdigit()`，
+            #   首列为空字符串时 `vals[0][0]` 抛 IndexError，
+            #   而这个异常被外层 `except: continue` 吞成"找不到工作表"，
+            #   用户永远查不到数据，且没有任何线索指向真实原因。
             if len(header) >= 3:
                 non_empty = sum(1 for v in vals if v)
-                if non_empty == 1 and not vals[0][0].isdigit():
-                    # 只有一个非空单元格，且不是纯数字 → 备注行
+                # 只有一个非空单元格 → 视为备注行
+                #
+                # 为什么不再判断"首列是否以数字开头"：
+                #   第一版多加了这个条件，结果首列为空的备注行反而漏过了
+                #   （`first` 为空时直接跳过判断）。
+                #   而"整行只有一个单元格有内容"本身已经是很强的备注特征 ——
+                #   正常的数据行至少要有主体 + 指标两列。
+                if non_empty == 1:
                     continue
 
             rows.append(vals)
@@ -352,6 +376,14 @@ class TableQueryTool:
                     return self._do_sum(table_name, column, idx, matched, filters)
 
                 return self._format_rows(table_name, header, matched, filters)
+            except _BadColumn as exc:
+                # 列名写错：明确告诉模型可用列名，它下次就能改对
+                return ToolResult(
+                    f"筛选条件里的列名《{exc.column}》不存在。\n"
+                    f"《{table_name}》可用的列名：{'、'.join(exc.available)}\n"
+                    f"请用完全一致的列名（注意空格和括号）。",
+                    ok=False,
+                )
             except Exception:  # noqa: BLE001
                 continue
 
@@ -370,15 +402,33 @@ class TableQueryTool:
           字符串 → 精确匹配（去掉首尾空白）
           数组   → 命中任一即可
         """
+        # ⚠️ 列名对不上时**必须报错**，不能静默跳过（实测踩的严重 bug）。
+        #
+        # 原来的写法是"列名写错就忽略这个条件"，理由是
+        # "至少还能拿到数据"。实测后果很糟：
+        #
+        #   把「公司名称」写成「公司名称 」（多个空格）
+        #     → 过滤条件被静默忽略
+        #     → 三家公司的 9 行一起被加总
+        #     → 返回 ok=True 和合计 531.7（正确应为 60）
+        #
+        # 模型看到 ok=True 和一个数字，会直接拿去回答用户 ——
+        # 用户得到"精确但错误"的答案。这比报错危险得多。
+        #
+        # 现在改成：列名对不上就报错，并列出可用列名让模型自我纠正。
+        for col in (filters or {}):
+            if col not in idx:
+                raise _BadColumn(col, list(idx.keys()))
+
         out: list[list[str]] = []
         for row in rows:
             ok = True
             for col, want in (filters or {}).items():
-                i = idx.get(col)
-                if i is None or i >= len(row):
-                    # 列名写错时不做过滤（而不是筛掉全部），
-                    # 这样模型至少还能拿到数据，不会因为列名笔误一无所获
-                    continue
+                i = idx[col]
+                if i >= len(row):
+                    # 列存在但这行没这个单元格（尾行缺列）→ 视为不匹配
+                    ok = False
+                    break
                 actual = row[i].strip()
                 if isinstance(want, (list, tuple)):
                     if not any(actual == str(w).strip() for w in want):

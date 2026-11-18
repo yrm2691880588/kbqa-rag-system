@@ -36,7 +36,7 @@ const FINANCE: DomainConfigShape = {
   name: 'finance',
   display_name: '财经',
   app_title: '财经数据知识库问答系统',
-  login_slogan: '把财报交给它',
+  login_slogan: '把资料交给它',
   welcome_title: '财经数据知识库问答',
   welcome_hint: '点击左侧新对话',
   example_questions: ['示例问题二'],

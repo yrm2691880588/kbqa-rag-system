@@ -50,6 +50,48 @@ router = APIRouter(prefix="/knowledge-bases", tags=["知识库"])
 MAX_BATCH_FILES = 50
 
 
+def _filename_stem(name: str) -> str:
+    """取文件名去掉扩展名的部分，用于判定"是不是同一份资料"。
+
+    ## 为什么要去扩展名
+
+        用户视角的"同一份资料更新了"通常是：
+
+            资料.md  →  资料.md     同格式更新
+            资料.md  →  资料.txt    导出格式变了
+
+        按完整文件名比对的话，第二种会被当成新文档，库里出现两份。
+
+    ## 为什么只去最后一个点
+
+        文件名可能带点：`v1.2资料.md`。
+        去最后一个点得到 `v1.2资料`，这是对的。
+        如果用 split(".") 取第一个，会得到 `v1`，那就错了。
+
+    Args:
+        name: 原始文件名（可能含扩展名，也可能不含）。
+
+    Returns:
+        去掉扩展名的部分。
+    """
+    if "." in name:
+        return name.rsplit(".", 1)[0]
+    return name
+
+
+def _like_escape(value: str) -> str:
+    """转义 LIKE 的通配符。
+
+    为什么需要：文件名里可能有 % 和 _。
+    不转义的话 `a%b.md` 会被当成"a 开头、b 结尾"的通配模式，
+    匹配到一堆无关文件，既慢又可能误判同名。
+
+    转义字符用反斜杠（在 SQL 里通过 ESCAPE 子句声明）。
+    反斜杠本身也要先转义，否则顺序会错。
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _max_upload_mb() -> int:
     """上传大小上限（MB），从配置读，不再写死在代码里。
 
@@ -233,23 +275,6 @@ async def _save_one_document(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "文件内容为空")
     file_hash = hashlib.sha256(content).hexdigest()
 
-    # 同知识库内查重：内容完全相同的文件
-    exist = await db.scalar(
-        select(Document).where(Document.kb_id == kb_id, Document.file_hash == file_hash)
-    )
-    if exist:
-        if exist.status == "ready":
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "该文件已在知识库中（如需更新内容，请先删除旧文件再上传）",
-            )
-        if exist.status in ("pending", "parsing", "embedding"):
-            raise HTTPException(status.HTTP_409_CONFLICT, "该文件正在入库处理中，请稍候")
-        # 旧记录是 failed：删掉旧记录与磁盘文件，按新上传处理（相当于重试）
-        _remove_doc_file(exist)
-        await db.delete(exist)
-        await db.flush()
-
     # ---- 同名文档处理（"更新"语义）----
     #
     # 为什么按"去掉扩展名的文件名"比对：
@@ -261,17 +286,52 @@ async def _save_one_document(
     #   同名但内容完全不同的两个文件是真实存在的（两个不同的「数据.md」）。
     #   直接覆盖会误伤用户数据。所以默认返回 409 让前端询问，
     #   用户确认后带 overwrite_name=true 再传一次。
-    stem = safe_name.rsplit(".", 1)[0] if "." in safe_name else safe_name
-    same_name_docs = (await db.execute(
-        select(Document).where(Document.kb_id == kb_id)
+    stem = _filename_stem(safe_name)
+
+    # 先在 SQL 里用 LIKE 粗筛，再在 Python 里做"去扩展名"精确比对。
+    #
+    # 为什么不能直接 `filename == safe_name`：
+    #   需求是"去扩展名比" —— a.md 和 a.txt 要算同一份资料。
+    #   SQL 里没有跨数据库通用的"去扩展名"函数，
+    #   所以用 LIKE 'stem%' 把候选缩小到个位数，再在 Python 里精筛。
+    #
+    # 为什么不能取整库再过滤（原实现的问题）：
+    #   文档数没有上限，企业场景单个库几千个文档，
+    #   每次上传都把全部读进内存是明显浪费。
+    #
+    # escape：文件名里可能有 % 和 _（LIKE 的通配符），
+    #   不转义的话 'a%b.md' 会匹配到一堆无关文件。
+    like_pattern = _like_escape(stem) + "%"
+    candidates = (await db.execute(
+        select(Document)
+        .where(Document.kb_id == kb_id)
+        .where(Document.filename.like(like_pattern, escape="\\"))
     )).scalars().all()
+
     same_name_docs = [
-        d for d in same_name_docs
-        if (d.filename.rsplit(".", 1)[0] if "." in d.filename else d.filename) == stem
+        d for d in candidates
+        if _filename_stem(d.filename) == stem
     ]
 
     if same_name_docs:
         target = same_name_docs[0]
+
+        # 同名 + 内容完全相同 → "没有变化的更新"
+        #
+        # 为什么单独处理这类（实测场景）：
+        #   · 用户手抖点两次上传
+        #   · 不确定上次传成功没有，又传一次
+        #
+        # 报错会让用户困惑「我就是要更新啊」；
+        # 重跑入库会白花 embedding 费用，而且旧向量被删重建，
+        # 重建期间检索查不到这份文档。
+        #
+        # 所以直接返回现有记录，并明确告诉调用方"内容没变化"。
+        if target.file_hash == file_hash and target.status == "ready":
+            logger.info(
+                "同名且内容未变化，直接返回现有记录 doc_id=%d", target.id
+            )
+            return target
 
         if not overwrite_name:
             # 交给前端弹窗确认，不擅自覆盖
@@ -319,6 +379,31 @@ async def _save_one_document(
             safe_name, target.id, target.version,
         )
         return target
+
+    # 不同名但内容完全相同的文件 → 仍然当作重复
+    #
+    # 为什么放在同名检测之后：
+    #   同名的那份文件已经在上面的分支处理掉了（覆盖或"无变化"）。
+    #   能走到这里说明"没有同名文档"，那内容查重就是纯粹的重复上传
+    #   （比如同一份资料改了个文件名又传一遍）。
+    exist = await db.scalar(
+        select(Document).where(Document.kb_id == kb_id, Document.file_hash == file_hash)
+    )
+    if exist:
+        if exist.status == "ready":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"内容相同的文件已存在（《{exist.filename}》）。"
+                f"如需更新它，请用同名文件上传。",
+            )
+        if exist.status in ("pending", "parsing", "embedding"):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "该文件正在入库处理中，请稍候"
+            )
+        # 旧记录是 failed：删掉按新上传处理（相当于重试）
+        _remove_doc_file(exist)
+        await db.delete(exist)
+        await db.flush()
 
     # 建记录 → 落盘 → 触发后台入库
     doc = Document(

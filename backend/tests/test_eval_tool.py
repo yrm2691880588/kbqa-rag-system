@@ -37,7 +37,7 @@ class KeywordHitTestCase(unittest.TestCase):
         self.keyword_hit = staticmethod(keyword_hit)
 
     def test_all_keywords_present(self):
-        ok, missing = self.keyword_hit("净利润为 142.7 亿元", ["142.7"])
+        ok, missing = self.keyword_hit("利润为 142.7 万元", ["142.7"])
         self.assertTrue(ok)
         self.assertEqual(missing, [])
 

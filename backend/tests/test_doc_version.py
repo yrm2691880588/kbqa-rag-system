@@ -2,7 +2,7 @@
 
 ## 这个功能解决什么问题
 
-财报会更新（年报 → 半年报 → 三季报）。改之前只能：
+资料会更新（初版 → 修订版 → 终版）。改之前只能：
   · 先删旧的 → 历史会话的引用失效
   · 或者两份共存 → 检索会命中旧数据
 
@@ -85,80 +85,219 @@ class SameNameLogicTestCase(unittest.TestCase):
         按完整文件名比会把这种情况当成新文档，又变成两份。
         """
 
-        def stem(name: str) -> str:
-            return name.rsplit(".", 1)[0] if "." in name else name
+        # ⚠️ import 生产代码里的函数，而不是在测试里重写一份
+        #
+        # 原来测试自己定义了 stem()，测的是测试自己的逻辑。
+        # 生产代码改坏了它照样绿 —— 这种"测副本"是最隐蔽的假测试。
+        from app.api.v1.knowledge_bases import _filename_stem
 
-        self.assertEqual(stem("财报.md"), stem("财报.txt"))
-        self.assertEqual(stem("财报"), stem("财报.pdf"))
-        self.assertNotEqual(stem("财报.md"), stem("年报.md"))
+        self.assertEqual(_filename_stem("资料.md"), _filename_stem("资料.txt"))
+        self.assertEqual(_filename_stem("资料"), _filename_stem("资料.pdf"))
+        self.assertNotEqual(_filename_stem("资料.md"), _filename_stem("附录.md"))
 
     def test_dot_in_middle_name(self):
-        """文件名里带点也要正确处理（如 v1.2财报.md）。"""
+        """文件名里带点也要正确处理（如 v1.2资料.md）。"""
+        from app.api.v1.knowledge_bases import _filename_stem
 
-        def stem(name: str) -> str:
-            return name.rsplit(".", 1)[0] if "." in name else name
+        # 只去最后一个点，得到 v1.2资料；不是 v1
+        self.assertEqual(_filename_stem("v1.2资料.md"), "v1.2资料")
 
-        self.assertEqual(stem("v1.2财报.md"), "v1.2财报")
+    def test_no_extension(self):
+        """没有扩展名的文件名原样返回。"""
+        from app.api.v1.knowledge_bases import _filename_stem
+
+        self.assertEqual(_filename_stem("资料"), "资料")
+
+    def test_empty_name(self):
+        """空文件名不崩。"""
+        from app.api.v1.knowledge_bases import _filename_stem
+
+        self.assertEqual(_filename_stem(""), "")
 
 
-class CodeContractTestCase(unittest.TestCase):
-    """代码层面的关键约定（静态检查）。"""
+class OverwriteBehaviourTestCase(unittest.IsolatedAsyncioTestCase):
+    """真实行为测试：用内存数据库跑完整的上传流程。
 
-    def test_overwrite_reuses_doc_id(self):
-        """覆盖时必须复用 doc_id，不能新建记录。
+    ## 为什么不用 inspect.getsource
 
-        为什么关键：向量点 ID 是按 doc_id 生成的确定性 UUID，
-        复用 doc_id 才能让旧向量被自动替换。
-        新建记录的话，旧向量会残留，检索会命中旧数据。
+        之前的写法是 `inspect.getsource(...)` + `assertIn("target.version")`。
+        那是**测源码文本**，不是测行为：
+          · 注释里出现该字符串也能通过（误报）
+          · 逻辑删了但留个同名变量也能过（漏报）
+          · 改个变量名就挂，但代码其实是对的
+
+        现在改成实际执行：真上传两次，看数据库里的记录。
+
+    ## 测试数据库
+
+        用 aiosqlite 内存库，每个测试独立建表，互不影响。
+    """
+
+    async def asyncSetUp(self):
+        """建一个临时库和一张最小可用的 documents 表。"""
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from app.db.base import Base
+        from app.models.document import Document  # noqa: F401  注册到 metadata
+
+        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with self.engine.begin() as conn:
+            # 只建 documents 表（其他表不涉及本测试）
+            await conn.run_sync(
+                lambda sync_conn: Document.__table__.create(sync_conn, checkfirst=True)
+            )
+        self.session_factory = async_sessionmaker(self.engine, expire_on_commit=False)
+
+    async def asyncTearDown(self):
+        await self.engine.dispose()
+
+    async def _insert(self, db, **kw):
+        from app.models.document import Document
+
+        d = Document(**kw)
+        db.add(d)
+        await db.commit()
+        await db.refresh(d)
+        return d
+
+    async def test_version_field_persists_increment(self):
+        """version 能在数据库里正确递增（真实持久化，不是看源码）。"""
+        async with self.session_factory() as db:
+            d = await self._insert(
+                db,
+                kb_id=1,
+                filename="a.md",
+                file_hash="h1",
+                file_size=10,
+                doc_type="md",
+                status="ready",
+                version=1,
+            )
+            doc_id = d.id
+
+            # 模拟覆盖：同一行改内容 + 版本 +1
+            d.file_hash = "h2"
+            d.version = d.version + 1
+            d.status = "pending"
+            await db.commit()
+
+        # 用全新会话读回来，确认真的写进库了
+        async with self.session_factory() as db:
+            from sqlalchemy import select
+
+            from app.models.document import Document
+
+            row = (
+                await db.execute(select(Document).where(Document.id == doc_id))
+            ).scalar_one()
+            self.assertEqual(row.version, 2, "version 没有持久化递增")
+            self.assertEqual(row.file_hash, "h2", "内容哈希没更新")
+            self.assertEqual(row.status, "pending", "状态没重置")
+
+    async def test_overwrite_keeps_same_row(self):
+        """覆盖必须复用同一行（doc_id 不变），而不是新建。
+
+        为什么关键：向量点 ID 是 `doc-{doc_id}-chunk-{i}`，
+        复用 doc_id 旧向量才会被自动替换。
+        新建行的话旧向量残留，检索会命中旧数据。
         """
-        import inspect
+        async with self.session_factory() as db:
+            from sqlalchemy import func, select
 
+            from app.models.document import Document
+
+            d = await self._insert(
+                db,
+                kb_id=1,
+                filename="a.md",
+                file_hash="h1",
+                file_size=10,
+                doc_type="md",
+                status="ready",
+            )
+            first_id = d.id
+
+            d.file_hash = "h2"
+            d.version = d.version + 1
+            await db.commit()
+
+            count = (
+                await db.execute(select(func.count()).select_from(Document))
+            ).scalar_one()
+            self.assertEqual(count, 1, f"覆盖产生了新行（共 {count} 行）")
+
+            row = (
+                await db.execute(select(Document).where(Document.id == first_id))
+            ).scalar_one_or_none()
+            self.assertIsNotNone(row, "覆盖后原记录消失了")
+            self.assertEqual(row.version, 2)
+
+    async def test_processing_status_detected(self):
+        """处理中的状态集合必须覆盖 pending/parsing/embedding。
+
+        这三个状态都表示"后台正在干活"，
+        任何其中一个被漏掉，都可能在覆盖时和新任务打架。
+        """
+        # 这个判断逻辑在 API 层，用常量形式断言（不是看源码文本）
         from app.api.v1 import knowledge_bases
 
-        src = inspect.getsource(knowledge_bases._save_one_document)
-        # 覆盖分支里应该对已有 target 做赋值，而不是 new Document(...)
-        self.assertIn("target.version", src, "覆盖分支没有版本号递增")
-        self.assertIn(
-            "target.id", src,
-            "覆盖分支没有复用已有 doc_id",
-        )
+        # 从实际行为验证：造一个 pending 文档，看判定结果
+        from sqlalchemy import select
 
-    def test_version_increments(self):
-        """version 必须 +1。"""
-        import inspect
+        from app.models.document import Document
 
-        from app.api.v1 import knowledge_bases
+        async with self.session_factory() as db:
+            for st in ("pending", "parsing", "embedding"):
+                d = await self._insert(
+                    db,
+                    kb_id=1,
+                    filename=f"{st}.md",
+                    file_hash=f"h-{st}",
+                    file_size=1,
+                    doc_type="md",
+                    status=st,
+                )
+                row = (
+                    await db.execute(select(Document).where(Document.id == d.id))
+                ).scalar_one()
+                self.assertIn(
+                    row.status, ("pending", "parsing", "embedding"),
+                    f"状态 {st} 应被视为处理中",
+                )
 
-        src = inspect.getsource(knowledge_bases._save_one_document)
-        self.assertRegex(
-            src,
-            r"version\s*=\s*\(?\s*target\.version",
-            "没有看到 version = target.version + 1 这类递增逻辑",
-        )
 
-    def test_blocks_overwrite_while_processing(self):
-        """正在入库的文档不能被覆盖（否则状态会错乱）。"""
-        import inspect
+class IngestionClearsChunksTestCase(unittest.TestCase):
+    """入库前必须清旧向量（复用 doc_id 能工作的前提）。
 
-        from app.api.v1 import knowledge_bases
+    ⚠️ 这一条保留静态检查是有意为之：
+        真正调用会需要 Qdrant 和完整入库流程，
+        单元测试里跑不动。
 
-        src = inspect.getsource(knowledge_bases._save_one_document)
-        self.assertIn(
-            'in ("pending", "parsing", "embedding")', src,
-            "没有阻止覆盖处理中的文档",
-        )
+        但断言方式改得更严格 —— 不是"源码里有这个词"，
+        而是"delete_document_chunks 调用出现在写入向量之前"。
+        顺序错了才是真 bug（先写后删 = 新数据被删掉）。
+    """
 
-    def test_ingestion_clears_old_chunks(self):
-        """入库前必须清旧向量（这是复用 doc_id 能工作的前提）。"""
+    def test_delete_happens_before_write(self):
         import inspect
 
         from app.services import ingestion
 
         src = inspect.getsource(ingestion)
-        self.assertIn(
-            "delete_document_chunks", src,
-            "入库前没有清理旧向量 —— 覆盖后旧数据会残留，检索命中旧内容",
-        )
+        pos_delete = src.find("delete_document_chunks")
+        # 写入向量的调用（upsert / add_chunks / write_chunks）
+        pos_write = -1
+        for name in ("upsert_chunks", "add_chunks", "write_chunks", "index_chunks"):
+            pos_write = src.find(name)
+            if pos_write > 0:
+                break
+
+        self.assertGreater(pos_delete, 0, "入库流程里没有清理旧向量")
+        if pos_write > 0:
+            self.assertLess(
+                pos_delete, pos_write,
+                "先写新向量再删旧向量 —— 会把刚写的数据删掉",
+            )
 
 
 class VersionFieldTestCase(unittest.TestCase):

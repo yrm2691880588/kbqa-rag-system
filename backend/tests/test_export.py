@@ -154,10 +154,10 @@ class BuildXlsxTestCase(unittest.TestCase):
 
         # 1 行表头 + 2 行数据
         self.assertEqual(len(rows), 3, f"行数不对：{len(rows)}")
-        self.assertEqual(rows[1][2], "问题一")
-        self.assertEqual(rows[1][3], "回答一")
-        self.assertEqual(rows[1][8], 1200)
-        self.assertEqual(rows[2][2], "问题二")
+        self.assertEqual(rows[1][3], "问题一")
+        self.assertEqual(rows[1][4], "回答一")
+        self.assertEqual(rows[1][9], 1200)
+        self.assertEqual(rows[2][3], "问题二")
 
     def test_unanswered_question_kept(self):
         """只有提问没有回答时，也要保留这一行。
@@ -173,9 +173,11 @@ class BuildXlsxTestCase(unittest.TestCase):
         _, rows = _read(build_session_xlsx("测试", msgs))
 
         self.assertEqual(len(rows), 3, f"丢了未回答的行：{len(rows)}")
-        self.assertEqual(rows[1][2], "没人回答的问题")
-        self.assertIn("未生成回答", str(rows[1][3]))
-        self.assertEqual(rows[2][2], "还有一个")
+        self.assertEqual(rows[1][3], "没人回答的问题")
+        self.assertIn("未生成回答", str(rows[1][4]))
+        # openpyxl 把空单元格读成 None，不是空字符串
+        self.assertFalse(rows[1][2], "未生成回答时，回答时间应为空")
+        self.assertEqual(rows[2][3], "还有一个")
 
     def test_feedback_rendered(self):
         """赞/踩要显示成中文，而不是 1 / -1。"""
@@ -187,9 +189,9 @@ class BuildXlsxTestCase(unittest.TestCase):
         ]
         _, rows = _read(build_session_xlsx("测试", msgs))
 
-        self.assertIn("有帮助", str(rows[1][5]))
-        self.assertIn("没帮助", str(rows[2][5]))
-        self.assertEqual(rows[2][6], "内容不准")
+        self.assertIn("有帮助", str(rows[1][6]))
+        self.assertIn("没帮助", str(rows[2][6]))
+        self.assertEqual(rows[2][7], "内容不准")
 
     def test_citations_rendered(self):
         """引用要压缩成一行。"""
@@ -201,7 +203,7 @@ class BuildXlsxTestCase(unittest.TestCase):
             ),
         ]
         _, rows = _read(build_session_xlsx("测试", msgs))
-        self.assertIn("某文档", str(rows[1][4]))
+        self.assertIn("某文档", str(rows[1][5]))
 
     def test_empty_session(self):
         """空会话也要能导出（只有表头）。"""
@@ -212,9 +214,9 @@ class BuildXlsxTestCase(unittest.TestCase):
         """表头必须存在且列数正确。"""
         ws, rows = _read(build_session_xlsx("测试", []))
         self.assertEqual(rows[0][0], "序号")
-        self.assertEqual(rows[0][2], "提问")
-        self.assertEqual(rows[0][3], "回答")
-        self.assertEqual(ws.max_column, 9)
+        self.assertEqual(rows[0][3], "提问")
+        self.assertEqual(rows[0][4], "回答")
+        self.assertEqual(ws.max_column, 10)
 
     def test_freeze_panes(self):
         """表头要冻结（滚动时可见）。"""

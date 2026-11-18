@@ -204,14 +204,34 @@ async def export_session(
     """
     sess = await _own_session(db, session_id, current_user.id)
 
-    rows = (
+    # ⚠️ 取"最近 N 条"，不是"最早 N 条"（Spec 轴指出的问题）。
+    #
+    # 原实现是 `order_by(id.asc()).limit(N)`，
+    # 超长会话时截掉的是**最新的消息** —— 用户导出后发现
+    # "最近问的几个问题没在里面"，正好和直觉相反。
+    #
+    # 现在改成：先按 id 降序取最近 N 条，再反转成正序。
+    total = (
         await db.execute(
-            select(Message)
+            select(func.count())
+            .select_from(Message)
             .where(Message.session_id == session_id)
-            .order_by(Message.id.asc())
-            .limit(_EXPORT_MAX_MESSAGES)
         )
-    ).scalars().all()
+    ).scalar_one()
+
+    rows = list(
+        (
+            await db.execute(
+                select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(Message.id.desc())
+                .limit(_EXPORT_MAX_MESSAGES)
+            )
+        ).scalars().all()
+    )
+    rows.reverse()   # 恢复时间正序，导出的文件才是从早到晚
+
+    truncated = total > len(rows)
 
     messages = [
         {
@@ -250,10 +270,22 @@ async def export_session(
         current_user.id, session_id, len(messages),
     )
 
+    headers = {"Content-Disposition": disposition}
+    if truncated:
+        # 注释承诺了"在响应头里标明被截断"，原实现没做 —— 补上。
+        # 前端可以据此提示用户"只导出了最近 N 条"。
+        headers["X-Export-Truncated"] = "true"
+        headers["X-Export-Total"] = str(total)
+        headers["X-Export-Limit"] = str(_EXPORT_MAX_MESSAGES)
+        logger.info(
+            "会话 %d 共 %d 条消息，超过上限 %d，只导出最近 %d 条",
+            session_id, total, _EXPORT_MAX_MESSAGES, len(messages),
+        )
+
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": disposition},
+        headers=headers,
     )
 
 

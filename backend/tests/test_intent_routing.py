@@ -99,10 +99,10 @@ class KnowledgeRoutingTestCase(unittest.TestCase):
     def test_normal_questions_pass(self):
         d = require_domain("finance")
         cases = [
-            "海联银行2025年的净利润是多少",
-            "启明科技的毛利率怎么样",
-            "长风能源的资产负债率高不高",
-            "市盈率是什么意思",
+            "某公司2025年的利润是多少",
+            "某公司的毛利率怎么样",
+            "第三家公司的负债比率高不高",
+            "指标B是什么意思",
             "这几家谁的利润最好",
         ]
         for q in cases:

@@ -4,7 +4,7 @@
 
 向量检索对"表格里的一行"区分度很低。实测两个典型失败：
 
-    「2025 年前三季度营业收入合计」
+    「某个季度区间的指标合计」
       → 需要 Q1+Q2+Q3 相加，检索做不到"聚合"
 
     「哪家公司的人最多」
@@ -161,6 +161,91 @@ class ToolBehaviourTestCase(unittest.TestCase):
         )
         # 文件不存在时先报读取失败，也是 ok=False —— 关键是别崩
         self.assertFalse(r.ok)
+
+
+class RemarkRowTestCase(unittest.TestCase):
+    """表格尾部备注行的过滤。
+
+    ## 这个测试锁住一个真 bug
+
+        第一版实现：
+
+            if non_empty == 1 and not vals[0][0].isdigit():
+
+        首列为空字符串时 `vals[0][0]` 抛 IndexError，
+        而这个异常被外层 `except: continue` 吞成"找不到工作表" ——
+        用户永远查不到数据，且没有任何线索指向真实原因。
+
+        修完崩溃后还发现第二个问题：那个 `not first[0].isdigit()`
+        条件让"首列为空的备注行"反而漏过了（first 为空时直接跳过判断）。
+
+        现在改成"整行只有 1 个非空单元格 → 备注行"，简单且正确。
+    """
+
+    def _fake_ws(self, rows):
+        class FakeWS:
+            def __init__(self, r):
+                self._rows = r
+
+            def iter_rows(self, values_only=True):
+                return iter(self._rows)
+
+        return FakeWS(rows)
+
+    def test_empty_first_cell_does_not_crash(self):
+        """首列为空的备注行不能崩（原 bug）。"""
+        from app.tools.table_query import TableQueryTool
+
+        ws = self._fake_ws([
+            ("主体", "期间", "指标A", "指标B"),
+            ("甲", "Q1", "100", "10"),
+            ("", "", "备注文字", ""),   # ← 首列为空
+        ])
+        header, rows = TableQueryTool()._read_sheet(ws)
+        self.assertEqual(len(rows), 1, "备注行没被过滤")
+        self.assertEqual(rows[0][0], "甲")
+
+    def test_single_cell_note_filtered(self):
+        """整行只有一个单元格有内容 → 备注行，跳过。"""
+        from app.tools.table_query import TableQueryTool
+
+        ws = self._fake_ws([
+            ("主体", "期间", "指标A", "指标B"),
+            ("甲", "Q1", "100", "10"),
+            ("说明：本表数据为示意", "", "", ""),
+            ("", "", "注：口径可能有差异", ""),
+            ("乙", "Q2", "200", "20"),
+        ])
+        _, rows = TableQueryTool()._read_sheet(ws)
+        self.assertEqual(len(rows), 2, f"备注行没过滤干净：{rows}")
+
+    def test_real_data_rows_kept(self):
+        """正常数据行（多列有值）不能被误删。"""
+        from app.tools.table_query import TableQueryTool
+
+        ws = self._fake_ws([
+            ("主体", "期间", "指标A", "指标B"),
+            ("甲", "Q1", "100", "10"),
+            ("乙", "Q2", "200", "20"),
+        ])
+        _, rows = TableQueryTool()._read_sheet(ws)
+        self.assertEqual(len(rows), 2)
+
+    def test_two_column_table_keeps_all(self):
+        """两列表格不启用备注过滤（防止误杀）。
+
+        为什么：列数少时，"只有一个单元格有内容"可能是合法的
+        （比如只有一个字段的数据行）。只在 >= 3 列时启用过滤。
+        """
+        from app.tools.table_query import TableQueryTool
+
+        ws = self._fake_ws([
+            ("项目", "数值"),
+            ("甲", "100"),
+            ("单列说明", ""),   # 两列表，不该被当备注删掉
+        ])
+        _, rows = TableQueryTool()._read_sheet(ws)
+        self.assertEqual(len(rows), 2, "两列表格不该启用备注过滤")
 
 
 class SecurityTestCase(unittest.TestCase):
