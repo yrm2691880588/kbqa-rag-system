@@ -67,9 +67,9 @@ $env:DOMAIN="ecommerce"; python run_tests.py
 
 | DOMAIN | Core 用例 | 领域用例 |
 |---|---|---|
-| `generic` | 630 | 0 |
-| `ecommerce` | 630 | 18 |
-| `finance` | 630 | 10 |
+| `generic` | 636 | 0 |
+| `ecommerce` | 636 | 18 |
+| `finance` | 636 | 10 |
 
 > 基线会随功能增加而变化。如果你加了测试，请顺手更新这张表 ——
 > 数字对不上的话，下一个人会怀疑是自己弄坏了什么。

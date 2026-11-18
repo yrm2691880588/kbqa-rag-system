@@ -103,8 +103,49 @@ def _doc_level_denoise(hits: list[dict]) -> list[dict]:
             out.append(h)
             kept += 1
 
-    out.sort(key=_score_of, reverse=True)
-    return out
+    # ── 交错排序（round-robin）──
+    #
+    # 为什么不能纯按分数排（实测问题）：
+    #   `retrieval_chunks_per_doc` 允许同一文档贡献多条片段。
+    #   当某篇文档与问题高度相关时，它的 3 条会把前 3 名全占，
+    #   而答案可能只在第 2 篇文档里 —— 表现成 Hit@3 未命中，
+    #   也给模型一份"全是同一文件"的材料。
+    #
+    #   实测三个失败 case 都是这个病根：
+    #     净息差 → [xlsx, xlsx, 分季度] 年报排第 5
+    #     口径   → [xlsx, 年报, 年报]   口径详解排第 4
+    #     风险   → [行业报告, 行业报告, xlsx]
+    #
+    # 交错规则：按"这条片段在本文档内的名次"分层，
+    #   第 0 层（各文档最高分）先出，然后是第 1 层，依此类推。
+    #   层内按分数排序。
+    #
+    #   这样前 N 位一定是 N 篇不同文档（前提是 N <= 文档数），
+    #   引用列表的多样性得到保证。
+    by_doc: dict = {}
+    for h in out:
+        by_doc.setdefault(h.get("doc_id"), []).append(h)
+
+    # 每个文档内先按分数降序（同一文档的片段按相关度排）
+    for did in by_doc:
+        by_doc[did].sort(key=_score_of, reverse=True)
+
+    # 按"文档内名次"分层交错
+    interleaved: list[dict] = []
+    depth = 0
+    while True:
+        layer = []
+        for did, hs in by_doc.items():
+            if depth < len(hs):
+                layer.append(hs[depth])
+        if not layer:
+            break
+        # 同层内按分数降序，保证高分文档优先
+        layer.sort(key=_score_of, reverse=True)
+        interleaved.extend(layer)
+        depth += 1
+
+    return interleaved
 
 
 async def retrieve(question: str, kb_ids: list[int] | None = None, top_k: int | None = None) -> list[dict]:
