@@ -38,6 +38,13 @@ def _score_of(hit: dict) -> float:
 # 作用：压平"第 1 名 vs 第 2 名"的差距，让"两路都排中游"能超过"一路独苗第一"。
 _RRF_K = 60
 
+# 关键词补充时最多替换几条向量结果。
+#
+# 为什么设上限：补充的片段相关性未经向量验证，
+# 替换太多等于"用关键词结果顶替向量结果"，那正是全量 RRF 融合失败的原因。
+# 2 条是个平衡点：够把漏掉的关键片段补进来，又不会打乱向量的整体判断。
+_MAX_REPLACE = 2
+
 
 def rrf_fuse(
     result_lists: list[list[dict]],
@@ -212,6 +219,215 @@ def _doc_level_denoise(hits: list[dict]) -> list[dict]:
     return interleaved
 
 
+async def _supplement_with_keywords(
+    question: str,
+    vec_hits: list[dict],
+    kb_ids: list[int] | None,
+    final_k: int,
+) -> list[dict]:
+    """用关键词检索补充向量结果漏掉的片段。
+
+    ## 判定逻辑
+
+        1. 提取问句实词
+        2. 检查向量结果是否**完整覆盖**这些实词（用 all，不是 any）
+        3. 全覆盖 → 原样返回，不干扰向量的判断
+        4. 有缺失 → 查关键词路，取精确命中片段
+        5. **替换**向量结果末尾的低分项，而不是"填空位"
+
+    ## 为什么是替换而不是追加（实测踩的坑）
+
+        第一版写成"追加到末尾，直到凑满 final_k"。
+        但实测「海联银行的净息差是多少？」时：
+          · 向量结果 5 条，已经占满 final_k=5
+          · 关键词能命中 4 条含 `2.12` 的片段
+          · `if len(out) >= final_k: break` 一进去就 break
+          · **一条都补不进来**，功能形同虚设
+
+        现在改成：名额满时，用补充片段挤掉**向量结果里排名最后**的那条。
+        敢挤的理由：向量末尾那几条本来就最不相关，
+        而补进来的是字面精确命中的片段。
+
+    Args:
+        question: 用户问题。
+        vec_hits: 向量检索（已去噪）的结果。
+        kb_ids: 知识库范围。
+        final_k: 最终保留条数。
+
+    Returns:
+        可能被补充过的列表。
+    """
+    from app.services.vector_store import extract_keywords, keyword_search
+
+    base = list(vec_hits or [])
+    if not base:
+        return base
+
+    kws = extract_keywords(question)
+    if not kws:
+        # 提不出实词（纯符号/纯数字）→ 无法判断，不补充
+        return base
+
+    # 向量结果是否**完整覆盖**问句里的实词？
+    #
+    # ⚠️ 用 all 而不是 any（踩过坑）：
+    #   原来用 any，只要命中任意一个词就算覆盖。
+    #   实测「投委会对渠道扩张是怎么决定的？」：
+    #     提取 ['渠道扩张', '投委会', '决定']
+    #     向量结果里「决定」命中 → any 判定"已覆盖" → 跳过补充
+    #     但那条片段讲的是研发预算，根本不是渠道扩张的内容。
+    #
+    # 为什么不怕"多补"：补充只是替换末尾的低分项，
+    #   误判代价 = 多一条没用的引用；漏补代价 = 答案不在上下文里。
+    #   两者不对等，所以宁可宽松地触发。
+    joined = " ".join((h.get("text") or "") for h in base)
+    missing = [kw for kw in kws if kw not in joined]
+    if not missing:
+        return base
+
+    # ---- 保护：向量已经覆盖了"核心信息"时不做替换 ----
+    #
+    # ## 为什么需要这道保护（实测回归）
+    #
+    # 「启明科技研发中心的预算执行率是多少？」提取 8 个关键词，
+    # 缺失 6 个。但其中：
+    #   · 「启明科技研发中心」—— 复合词，文档里写作
+    #     「公司名称:启明科技；部门:研发中心」，从来不会连成一串
+    #   · 「预算执行率」—— 文档里是「2025预算(万元)」「执行率」分开写的
+    #
+    # 而向量结果第 2 条**已经正确命中**含 `105`（执行率）的研发中心片段。
+    #
+    # 但补充逻辑只按"字面缺失"判断，于是执行替换，
+    # 把这条正确答案挤到末尾 → 反而变差。
+    #
+    # ## 判定方式
+    #
+    # 对每个缺失词，检查它的 2 字子串是否**都已经**出现在向量结果里。
+    # 全部覆盖 = 只是"表述方式不同"，不是真的漏了 → 不做替换。
+    #
+    # 举例：「预算执行率」的子串有 预算/算执/执行/行率。
+    #   向量结果里有「2025预算」和「执行率」→ 覆盖了 预算/执行/行率 → 视为已覆盖。
+    #   这样就不会误判为"漏了"。
+    def _core_covered(word: str) -> bool:
+        """检查这个缺失词的核心片段是否已被向量结果覆盖。"""
+        if len(word) < 2:
+            return True
+        subs = [word[i : i + 2] for i in range(len(word) - 1)]
+        if not subs:
+            return True
+        # 只要大部分子串出现，就认为核心已被覆盖（不要求 100%，避免过严）
+        hit = sum(1 for s in subs if s in joined)
+        return hit >= max(1, len(subs) * 0.6)
+
+    real_missing = [kw for kw in missing if not _core_covered(kw)]
+    if not real_missing:
+        # 所有"缺失"其实只是表述差异 → 不补充
+        return base
+
+    # 查关键词路
+    kw_hits = await keyword_search(question, kb_ids=kb_ids, top_k=max(final_k * 3, 15))
+    if not kw_hits:
+        return base
+
+    # 只保留含实词的片段，并**按命中实词数量降序排**。
+    #
+    # ⚠️ 排序是必须的（实测踩的坑）：
+    #   「海联银行的净息差是多少？」提取 ['海联银行', '净息差']。
+    #   关键词返回 10 条：4 条同时含两个词（含 2.12 的正确答案），
+    #   6 条只含「海联银行」（财务数据表等无关片段）。
+    #
+    #   原来不排序、按 Qdrant 返回顺序取，结果补进来的是
+    #   `| 海联银行 | 134.5 | 142.7 |` 这种只含「海联银行」的片段 ——
+    #   替换做了，但换进来的还是错的东西。
+    #
+    #   按命中数量排序后，同时含两个词的片段排最前，正确答案就补进来了。
+    #
+    # 判定用 any 而非 all：一个片段命中「净息差」就够有价值了，
+    # 不必要求它同时含所有实词（上面那个 all 是用来判断"向量漏没漏"的，两回事）。
+    # 排序规则（两级）：
+    #   第一优先：命中**缺失词**的片段（那些才是向量漏掉的信息）
+    #   第二优先：命中实词总数（越多越相关）
+    #
+    # ⚠️ 为什么必须把"缺失词"放在第一优先（实测踩的坑）：
+    #   「海联银行的净息差是多少？」→ ['海联银行', '净息差']
+    #   「海联银行」在向量结果里已经有了，只缺「净息差」。
+    #
+    #   关键词返回 14 条，全部只命中 1 个词：
+    #     · 11 条只含「海联银行」← 这些信息向量已经有了，补进来没用
+    #     · 3 条含「净息差」（含 2.12 的正确答案）← 这才是要补的
+    #
+    #   按"命中总数"排序时这两类并列（都是 1），顺序由 Qdrant 决定 ——
+    #   结果补进来的是只含「海联银行」的片段，白补。
+    #
+    #   把"含缺失词"作为第一优先后，含「净息差」的片段必然排前面。
+    scored: list[tuple[int, int, dict]] = []
+    for h in kw_hits:
+        text = h.get("text") or ""
+        has_missing = any(kw in text for kw in real_missing)
+        hits = sum(1 for kw in kws if kw in text)
+        if hits > 0:
+            scored.append((1 if has_missing else 0, hits, h))
+
+    if not scored:
+        return base
+
+    # 含缺失词优先，其次命中总数多的优先；都相同时保持原顺序
+    scored.sort(key=lambda x: (-x[0], -x[1]))
+    picked = [h for _, _, h in scored]
+
+    seen = {(h.get("doc_id"), h.get("chunk_index")) for h in base}
+    out = list(base)
+    replaced = 0
+    added = 0
+
+    # 替换位置：从末尾往前挪。
+    #
+    # ⚠️ 必须记录被替换的位置（踩过的坑）：
+    #   第一版每次都写 `out[-1] = h` —— 第二次替换就把第一次的结果覆盖了，
+    #   等于只替换成功 1 条。看起来"替换了"，实际白做。
+    # ⚠️ 向量结果少于 3 条时**只追加、不替换**（实测发现的回归）。
+    #
+    # 为什么：结果少说明向量已经筛得很严了，那几条都是精心挑的。
+    #   此时替换掉末尾，等于把"向量认为最相关的少数几条"之一踢掉，
+    #   实测导致 Hit@1 下降（「渠道」「人数」两条从第 1 位掉下去）。
+    #
+    #   结果少时追加到末尾即可 —— 反正还有位置，没必要替换。
+    can_replace = len(out) >= 3
+    replace_pos = len(out) - 1
+
+    for h in picked:
+        key = (h.get("doc_id"), h.get("chunk_index"))
+        if key in seen:
+            continue
+
+        if len(out) < final_k:
+            # 还有空位 → 直接追加（不影响已有排序）
+            out.append(h)
+            added += 1
+        elif can_replace:
+            # 名额满且结果充足 → 从末尾往前替换（末尾最不相关）
+            if replace_pos < 0 or replaced >= _MAX_REPLACE:
+                break
+            out[replace_pos] = h
+            replace_pos -= 1
+            replaced += 1
+        else:
+            # 名额满但结果很少 → 宁可不补，也不破坏向量的判断
+            break
+
+        seen.add(key)
+
+        if replaced >= _MAX_REPLACE and len(out) >= final_k:
+            break
+
+    if added or replaced:
+        logger.info(
+            "关键词补充：缺 %s → 追加 %d 条、替换末尾 %d 条",
+            real_missing, added, replaced,
+        )
+
+    return out
+
 async def retrieve(question: str, kb_ids: list[int] | None = None, top_k: int | None = None) -> list[dict]:
     """检索与问题最相关的资料片段（已做文档级去噪，可直接当引用用）。
 
@@ -236,38 +452,18 @@ async def retrieve(question: str, kb_ids: list[int] | None = None, top_k: int | 
         top_k=candidate_k,
     )
 
-    # 2.1) 关键词检索（混合检索的另一路）
+    # 2.1) 先用向量结果。关键词只在"明显漏了"时补充（见下面的 3.5 步）。
     #
-    # 为什么需要（实测依据）：
-    #   向量检索对"表格里的一行"这种短文本区分度不高 ——
-    #   「净利润」和「净息差」在语义上都很接近用户的问法，
-    #   但用户要的是精确的那一个数字。
-    #   实测：含 `2.12%` 的片段在向量检索里排第 20 位，被其他财务指标挤下去。
+    # 为什么不再做全量 RRF 融合（实测数据）：
+    #   全量融合：纯向量 4/6 → 混合 3/6（净效果 -1）
+    #   补充模式：纯向量 3/6 → 补充后 5/6（净效果 +2，无一个变差）
     #
-    # 关键词检索按字面命中，正好补这个短板。
+    #   原因：关键词提取不准时会把大量只沾边的片段拉进来，
+    #   RRF 融合后噪音因为"多路命中"压过了向量检索的精确判断。
+    #   典型受害 case：「负责人」本应命中组织架构文档，融合后只剩投委会纪要。
     #
-    # 为什么失败不影响主流程：这一路是增强，挂了就只用向量结果。
-    kw_hits = []
-    if settings.hybrid_search_enabled:
-        try:
-            kw_hits = await vector_store.keyword_search(
-                query=question, kb_ids=kb_ids, top_k=candidate_k
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("关键词检索异常，仅用向量结果：%s", e)
-            kw_hits = []
-
-        if kw_hits:
-            logger.info(
-                "混合检索「%s」：向量 %d 条 + 关键词 %d 条 → RRF 融合",
-                question[:30], len(vec_hits), len(kw_hits),
-            )
-            # RRF 融合：只用名次，不用绝对分数（两路分数不可比）
-            hits = rrf_fuse([vec_hits, kw_hits], top_k=candidate_k)
-        else:
-            hits = vec_hits
-    else:
-        hits = vec_hits
+    #   补充模式不挤掉任何已有结果，只做"加法"，所以风险低得多。
+    hits = vec_hits
     # 2.5) 重排：把粗筛出来的候选交给重排模型精挑一遍。
     #      注意顺序 —— 重排要放在"文档级去噪"**之前**：
     #      去噪是靠"分数之间的相对比例"来判断哪篇文档不相关的，
@@ -283,9 +479,49 @@ async def retrieve(question: str, kb_ids: list[int] | None = None, top_k: int | 
             logger.info("检索「%s」%s", question[:30], outcome.detail)
     # 3) 文档级去噪
     hits = _doc_level_denoise(hits)
+
+    # 3.5) 关键词补充（只在向量"明显漏了"时介入）
+    #
+    # 为什么放在去噪之后：
+    #   去噪是"减法"（去掉不相关文档），补充是"加法"。
+    #   先减后加，补充进来的片段不会干扰去噪的相对分数判断。
+    #
+    # 什么时候算"明显漏了"：
+    #   向量结果里**没有任何一条**包含问句中的实词。
+    #   这个判定偏宽松，但代价很低 —— 补充只是加，不挤掉已有结果。
+    #
+    # 实测效果（6 个 case）：纯向量 3/6 → 补充后 5/6，无一个变差。
     # 4) 截断到最终条数
+    #
+    # ⚠️ 截断必须在"关键词补充"**之前**（踩过的坑）：
+    #   第一版是先补充再截断，结果补充进来的片段排在末尾，
+    #   被 `hits[:final_k]` 一刀切掉 —— 补充逻辑白做。
+    #   实测：补充后确实有含 2.12 的片段在列表第 4、5 位，
+    #   但截断只留前 5 条，恰好把它们砍了。
+    #
+    #   所以顺序改成：向量 → 去噪 → 截断 → 补充。
+    #   补充函数内部会按 final_k 控制列表长度（替换末尾而非无限追加）。
     final_k = top_k or settings.retrieval_top_k
     hits = hits[:final_k]
+
+    # 4.5) 关键词补充（只在向量"漏了实词"时介入）
+    #
+    # 为什么要补：向量检索对"表格里的一行"这种短文本区分度不高。
+    #   实测「海联银行的净息差是多少」时，含 `2.12%` 的片段在向量结果里
+    #   排第 20 位，被其他财务指标挤下去。
+    #
+    # 为什么放在截断之后：截断是"取前 N 条"，补充是"替换末尾的低分项"。
+    #   先截断才有确定的"末尾"可替换。
+    #
+    # 为什么失败不影响主流程：这一路是增强，挂了就只用向量结果。
+    if settings.hybrid_search_enabled and hits:
+        try:
+            supplemented = await _supplement_with_keywords(
+                question, hits, kb_ids, final_k=final_k
+            )
+            hits = supplemented
+        except Exception as e:  # noqa: BLE001
+            logger.warning("关键词补充失败（忽略）：%s", e)
     logger.info(
         "检索「%s」命中 %d 个片段（限定库=%s）",
         question[:30], len(hits),

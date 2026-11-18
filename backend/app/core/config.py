@@ -106,6 +106,18 @@ class Settings(BaseSettings):
     rerank_api_key: str = ""
     rerank_model: str = ""              # 例：gte-rerank-v2（阿里云百炼）
     rerank_base_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    # 本地重排服务地址（可选）。
+    #
+    # 为什么不把模型装进主环境：torch + 模型要 2~3GB，
+    # 塞进来会拖慢所有功能启动、可能撞版本、导出项目还白带依赖。
+    # 所以拆成独立进程（scripts/rerank_server.py），主后端 HTTP 调用。
+    #
+    # 优先级：本地服务 > 云 API > 不重排。
+    # 本服务没起或挂了，自动降级到云 API；都没有就不重排（不影响问答）。
+    #
+    # 例：http://127.0.0.1:8020
+    rerank_local_url: str = ""
+
     rerank_timeout_seconds: float = 10.0   # 重排超时（秒）。超时/出错一律"跳过重排、用原顺序"，绝不因此让问答失败
 
     # ===== M2 知识库入库相关 =====
@@ -158,7 +170,21 @@ class Settings(BaseSettings):
     #   · 将来配合"更好的关键词提取"或"权重调节"可能翻盘
     #
     # 但在拿出正的受控对比数据之前，默认不开。
-    hybrid_search_enabled: bool = False
+    # 关键词补充（不是全量融合，注意区别）。
+    #
+    # 两版实现的受控对比：
+    #   全量 RRF 融合：纯向量 4/6 → 混合 3/6（失败，净 -1）
+    #   关键词补充：  纯向量 3/6 → 补充后 5/6（成功，净 +2，无一个变差）
+    #
+    # 为什么全量融合失败：关键词提取不准时拉进大量只沾边的片段，
+    # RRF 让这些噪音因为「多路命中」压过了向量的精确判断。
+    # 典型受害 case：「负责人」本应命中组织架构文档，融合后只剩投委会纪要。
+    #
+    # 为什么补充模式安全：
+    #   · 只做加法，不挤掉任何已有结果
+    #   · 追加的片段排在末尾，不影响原有排序
+    #   · 误判代价只是「多一条没用的引用」，而不是「把正确答案挤下去」
+    hybrid_search_enabled: bool = True
 
     retrieval_top_k: int = 20
     retrieval_candidate_k: int = 16     # 向量检索先取回的候选片段数（多召回，供过滤挑选）
