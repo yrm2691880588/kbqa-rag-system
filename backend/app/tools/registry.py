@@ -4,7 +4,7 @@
 
 工具写好了，但「哪个领域能用哪些工具」需要一处统一管理：
 
-    finance   → calculator + date_range
+    finance   → calculator + date_range + table_query
     ecommerce → calculator
     generic   → （空）
 
@@ -30,6 +30,7 @@ from app.domain.base import DomainSpec
 from app.tools.base import Tool, to_openai_schema
 from app.tools.calculator import CalculatorTool
 from app.tools.date_range import DateRangeTool
+from app.tools.table_query import TableQueryTool
 
 logger = logging.getLogger("kbqa.tools.registry")
 
@@ -41,6 +42,7 @@ logger = logging.getLogger("kbqa.tools.registry")
 _BUILTIN: dict[str, Tool] = {
     "calculator": CalculatorTool(),
     "date_range": DateRangeTool(),
+    "table_query": TableQueryTool(),
 }
 
 
@@ -84,7 +86,12 @@ def get_schemas(tools: list[Tool]) -> list[dict]:
     return [to_openai_schema(t) for t in tools]
 
 
-async def execute_tool(tools: list[Tool], name: str, arguments: dict) -> str:
+async def execute_tool(
+    tools: list[Tool],
+    name: str,
+    arguments: dict,
+    context: dict | None = None,
+) -> str:
     """按名字执行一个工具，返回给模型看的结果文本。
 
     Args:
@@ -92,6 +99,12 @@ async def execute_tool(tools: list[Tool], name: str, arguments: dict) -> str:
                防止模型调用领域未启用的工具）。
         name: 工具名。
         arguments: 模型填的参数。
+        context: 调用方提供的上下文（如"当前知识库有哪些表格文件"）。
+            **只有声明了 needs_context 的工具才会收到它**。
+
+            为什么不无条件传：大多数工具是纯函数（计算器、日期），
+            多传一个用不上的参数会让"纯函数"这个约定变得模糊。
+            显式标记 + 按需注入，意图更清楚。
 
     Returns:
         结果文本。任何失败都返回错误说明，不抛异常 ——
@@ -103,7 +116,11 @@ async def execute_tool(tools: list[Tool], name: str, arguments: dict) -> str:
         return f"错误：工具 {name} 不可用"
 
     try:
-        result = await target.run(**arguments)
+        if getattr(target, "needs_context", False) and context:
+            # 用下划线前缀传，避免和模型能填的参数名撞车
+            result = await target.run(_context=context, **arguments)
+        else:
+            result = await target.run(**arguments)
         return result.text
     except TypeError as exc:
         # 参数不匹配（模型填错了字段名）

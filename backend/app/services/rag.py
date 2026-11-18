@@ -184,11 +184,68 @@ def _remember(cache_key: str, answer: str, citations: list) -> None:
         ai_guard.llm_breaker.record_failure()
 
 
+async def _build_tool_context(kb_ids: list[int] | None) -> dict:
+    """构造工具上下文：本次允许访问的 Excel 表格清单。
+
+    ## 安全边界（重要）
+
+        只查 `kb_ids` 范围内的文档。`kb_ids` 是检索时算好的
+        "当前用户有权访问、且属于当前领域"的知识库列表。
+
+        所以这个函数天然受多租户 + 领域隔离约束：
+        用户看不见的库、别的领域的库，都不会出现在这里。
+
+    ## 为什么不把全部字段都带上
+
+        模型只需要 `doc_id`（交给工具定位文件）和 `name`（让它知道有哪几个文件）。
+        带上路径会诱使模型去拼路径，反而增加越权风险。
+
+    Args:
+        kb_ids: 允许访问的知识库 id 列表；None 表示不限制（平台级调用）。
+
+    Returns:
+        {"tables": [{"kb_id":.., "doc_id":.., "name": ".."}, ...]}
+        没有 Excel 时返回空列表（工具会据此提示"没有可查询的表格"）。
+    """
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.document import Document
+
+    tables: list[dict] = []
+    try:
+        async with AsyncSessionLocal() as db:
+            stmt = select(Document).where(Document.filename.like("%.xlsx"))
+            if kb_ids is not None:
+                if not kb_ids:
+                    return {"tables": []}
+                stmt = stmt.where(Document.kb_id.in_(kb_ids))
+            rows = (await db.execute(stmt)).scalars().all()
+            for d in rows:
+                # 只把"已就绪"的文档交出去：还在解析中的文件读不到内容
+                if getattr(d, "status", None) not in (None, "ready"):
+                    continue
+                tables.append({
+                    "kb_id": d.kb_id,
+                    "doc_id": d.id,
+                    "name": d.filename,
+                })
+    except Exception as exc:  # noqa: BLE001
+        # 查不到表格不该影响问答，工具会提示"没有可查询的表格"
+        logger.warning("构造工具上下文失败（忽略）：%s", exc)
+        return {"tables": []}
+
+    if tables:
+        logger.info("表格查询工具可用文件：%s", [t["name"] for t in tables])
+    return {"tables": tables}
+
+
 async def _run_tool_loop(
     messages: list[dict],
     tools: list,
     llm: AsyncOpenAI,
     max_rounds: int,
+    tool_context: dict | None = None,
 ) -> list[dict]:
     """执行工具调用循环，返回可以继续用来生成最终答案的 messages。
 
@@ -283,7 +340,9 @@ async def _run_tool_loop(
                 args = {}
 
             logger.info("工具调用：%s(%s)", name, raw_args[:120])
-            result_text = await execute_tool(tools, name, args)
+            result_text = await execute_tool(
+                tools, name, args, context=tool_context
+            )
 
             working.append(
                 {
@@ -515,11 +574,22 @@ async def stream_answer(
         #   只有最终那一轮才走流式输出。
         domain_tools = get_tools_for(_domain)
         if domain_tools and settings.tool_max_rounds > 0:
+            # 工具上下文：告诉 table_query 这类工具"当前库里有哪些表格文件"。
+            #
+            # 为什么由这里提供而不是让模型自己找：
+            #   模型只看得到文本，不知道文件在磁盘哪里、doc_id 是多少。
+            #   让它去猜 id 既不可靠也不安全（可能越权读别的库的文件）。
+            #   所以由后端在检索范围内查出"本次允许访问的表格"，显式传进去。
+            tool_context = await _build_tool_context(kb_ids) if any(
+                getattr(t2, "needs_context", False) for t2 in domain_tools
+            ) else None
+
             messages = await _run_tool_loop(
                 messages=messages,
                 tools=domain_tools,
                 llm=llm,
                 max_rounds=settings.tool_max_rounds,
+                tool_context=tool_context,
             )
 
         call_kwargs = dict(
