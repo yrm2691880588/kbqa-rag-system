@@ -29,7 +29,7 @@ const ECOMMERCE: DomainConfigShape = {
   login_slogan: '把商品资料交给它',
   welcome_title: '商品知识库智能问答',
   welcome_hint: '点击左侧新对话',
-  example_questions: ['S10 电池容量是多少'],
+  example_questions: ['示例问题一'],
 }
 
 const FINANCE: DomainConfigShape = {
@@ -39,7 +39,7 @@ const FINANCE: DomainConfigShape = {
   login_slogan: '把财报交给它',
   welcome_title: '财经数据知识库问答',
   welcome_hint: '点击左侧新对话',
-  example_questions: ['海联银行净利润'],
+  example_questions: ['示例问题二'],
 }
 
 // ---------------------------------------------------------------------------

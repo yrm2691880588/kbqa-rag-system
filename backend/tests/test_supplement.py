@@ -5,7 +5,7 @@
 ### 第 1 版：全量 RRF 融合 —— 失败
 
     纯向量：4/6 → 混合 3/6（净 -1）
-    「负责人」本应命中组织架构文档，融合后只剩投委会纪要。
+    「负责人」本应命中组织架构文档，融合后只剩评审会纪要。
 
 原因：关键词提取不准时拉进大量噪音，RRF 让噪音"多路命中"压过向量判断。
 
@@ -21,14 +21,14 @@
 
 ### 第 4 版（当前）：判定收紧 + 少结果不替换
 
-    ✅ 内容改善 3 个（不良率、净息差、渠道）
+    ✅ 内容改善 3 个（指标A、某个指标、渠道）
     ✅ Hit@1 / Hit@3 完全无损
     ✅ 无一个 case 变差
 
 ## 这组测试保护什么
 
   · "缺词判定"用 all 而不是 any
-  · 缺失词的核心子串已覆盖时不补充（防「预算执行率」误判）
+  · 缺失词的核心子串已覆盖时不补充（防「预算完成率」误判）
   · 结果少于 3 条时只追加不替换（防 Hit@1 下降）
   · 补充失败不能影响向量结果
 """
@@ -70,7 +70,7 @@ class SupplementGuardTestCase(unittest.TestCase):
         src = inspect.getsource(_supplement_with_keywords)
         self.assertIn(
             "_core_covered", src,
-            "缺少核心子串覆盖判定 —— 「预算执行率」这类复合词会被误判为缺失",
+            "缺少核心子串覆盖判定 —— 「预算完成率」这类复合词会被误判为缺失",
         )
 
     def test_max_replace_limit_exists(self):
@@ -88,7 +88,7 @@ class SupplementGuardTestCase(unittest.TestCase):
         """关键词补充必须在「截断」之后，不能在之前。
 
         实测踩过：先补充再截断，补进来的片段在末尾，被 hits[:final_k] 切掉，
-        整个补充逻辑白做（净息差一直修不好就是因为这个）。
+        整个补充逻辑白做（某个指标一直修不好就是因为这个）。
         """
         import inspect
 
@@ -129,20 +129,20 @@ class KeywordExtractTestCase(unittest.TestCase):
 
     def test_extracts_content_words(self):
         """能提取出问句里的实词。"""
-        kws = self.extract("海联银行的净息差是多少？")
-        self.assertIn("净息差", kws, f"没提取出「净息差」：{kws}")
+        kws = self.extract("某公司的某个指标是多少？")
+        self.assertIn("某个指标", kws, f"没提取出「某个指标」：{kws}")
 
     def test_strips_question_words(self):
         """疑问词不应出现在关键词里。"""
-        kws = self.extract("净利润是多少？")
+        kws = self.extract("利润是多少？")
         for bad in ("是多少", "多少", "什么"):
             self.assertNotIn(bad, kws, f"疑问词「{bad}」没被过滤：{kws}")
 
     def test_long_phrase_split_into_ngrams(self):
         """长问句要切出 n-gram，否则文档里匹配不到。"""
-        kws = self.extract("投委会对渠道扩张是怎么决定的？")
-        # 「投委会对渠道扩张」整串在文档里不存在，必须切出「渠道扩张」
-        self.assertIn("渠道扩张", kws, f"没切出「渠道扩张」：{kws}")
+        kws = self.extract("评审会对业务扩张是怎么决定的？")
+        # 「评审会对业务扩张」整串在文档里不存在，必须切出「业务扩张」
+        self.assertIn("业务扩张", kws, f"没切出「业务扩张」：{kws}")
 
     def test_empty_question(self):
         self.assertEqual(self.extract(""), [])
@@ -150,7 +150,7 @@ class KeywordExtractTestCase(unittest.TestCase):
 
     def test_result_count_limited(self):
         """关键词数量要有上限，避免每次检索发几十个请求。"""
-        kws = self.extract("请详细说明海联银行2025年度营业收入净利润总资产不良贷款率拨备覆盖率的对比情况")
+        kws = self.extract("请详细说明某公司2025年度收入利润资产另一个指标拨备覆盖率的对比情况")
         self.assertLessEqual(len(kws), 10, f"提取了 {len(kws)} 个关键词，太多")
 
 

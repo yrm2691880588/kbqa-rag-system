@@ -67,21 +67,41 @@ class EvalSetFormatTestCase(unittest.TestCase):
     """评估集格式的完整性检查。"""
 
     def setUp(self):
+        # 按当前领域找对应的评估集。
+        #
+        # 为什么不写死 finance：导出电商/通用领域时，
+        # `backend/eval/` 整个目录会被排除（里面全是财经内容和期望答案，
+        # 带过去纯属污染）。此时这个测试应该跳过，而不是失败。
+        import os
+
+        domain = os.environ.get("DOMAIN", "generic").strip() or "generic"
         self.path = (
-            pathlib.Path(__file__).parent.parent / "eval" / "eval_set.finance.json"
+            pathlib.Path(__file__).parent.parent / "eval" / f"eval_set.{domain}.json"
         )
 
+    def _load(self):
+        """读评估集；不存在就跳过这个测试。"""
+        if not self.path.exists():
+            self.skipTest(
+                f"当前领域 {self.path.stem} 没有评估集（导出产物里这是正常的）"
+            )
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
     def test_eval_set_exists(self):
-        self.assertTrue(self.path.exists(), "财经评估集不存在")
+        if not self.path.exists():
+            self.skipTest(
+                f"当前领域没有评估集 {self.path.name}（导出产物里这是正常的）"
+            )
+        self.assertTrue(self.path.exists())
 
     def test_eval_set_is_valid_json(self):
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = self._load()
         self.assertIn("cases", data)
         self.assertGreater(len(data["cases"]), 0)
 
     def test_each_case_has_required_fields(self):
         """每个 case 必须有 question 和 expect_docs。"""
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = self._load()
         for i, c in enumerate(data["cases"]):
             with self.subTest(index=i):
                 self.assertIn("question", c, f"第 {i} 个 case 缺 question")
@@ -97,7 +117,7 @@ class EvalSetFormatTestCase(unittest.TestCase):
 
         例如填 "元" 这种词，任何答案都会命中，评估就失效了。
         """
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = self._load()
         too_generic = {"元", "亿", "的", "是", "有", "数据", "资料"}
 
         for c in data["cases"]:
@@ -110,14 +130,14 @@ class EvalSetFormatTestCase(unittest.TestCase):
 
     def test_case_count_reasonable(self):
         """题量太少评估不可靠，太多跑一轮太慢。"""
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = self._load()
         n = len(data["cases"])
         self.assertGreaterEqual(n, 15, f"只有 {n} 题，太少，评估不可靠")
         self.assertLessEqual(n, 60, f"有 {n} 题，太多，跑一轮太慢")
 
     def test_questions_are_unique(self):
         """重复的问题会让通过率虚高。"""
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data = self._load()
         questions = [c["question"] for c in data["cases"]]
         self.assertEqual(len(questions), len(set(questions)), "有重复的问题")
 

@@ -553,7 +553,7 @@ async def chat(payload: ChatRequest, current_user: CurrentUser, db: DbSession):
                     yield _sse("saved", {"message_id": assistant_msg_id})
             except GeneratorExit:
                 # 只记长度，**不记内容** —— 回答里可能有用户隐私
-                # （财报数字、联系人信息等），不该进日志。
+                # （业务数据、联系人信息等），不该进日志。
                 logger.debug("客户端断开时已生成 %d 段内容", len(answer_buf))
                 # 客户端主动断开（关页面/切会话/点停止生成）时，生成器被关闭会抛这个。
                 # 不能当成错误处理，也不能向外 yield 任何东西（流已经没了）。
