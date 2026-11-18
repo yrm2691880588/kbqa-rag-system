@@ -67,9 +67,9 @@ $env:DOMAIN="ecommerce"; python run_tests.py
 
 | DOMAIN | Core 用例 | 领域用例 |
 |---|---|---|
-| `generic` | 617 | 0 |
-| `ecommerce` | 617 | 18 |
-| `finance` | 617 | 10 |
+| `generic` | 630 | 0 |
+| `ecommerce` | 630 | 18 |
+| `finance` | 630 | 10 |
 
 > 基线会随功能增加而变化。如果你加了测试，请顺手更新这张表 ——
 > 数字对不上的话，下一个人会怀疑是自己弄坏了什么。
@@ -90,6 +90,27 @@ $env:DOMAIN="ecommerce"; python run_tests.py
 | `tests/test_stream_save.py` | 流式回答增量落库、中断处理 |
 
 **特别注意**：`test_tools.py` 里的注入测试是安全边界，不能为了让它变绿而放宽校验。
+
+### 质量评估（改检索/分块/提示词后必跑）
+
+```bash
+cd backend
+python scripts/eval_all.py --set eval/eval_set.finance.json --kb 财经示例库
+```
+
+输出两层数字：
+
+| 层 | 测什么 | 指标 |
+|---|---|---|
+| 检索层 | 找没找对文档 | Hit@1 / Hit@3 / MRR |
+| 回答层 | 回答里有没有正确答案 | 关键词命中率 |
+
+**两层都要看。** 只测检索层会漏掉「检索对了但模型说没有」的情况 ——
+这个坑真实踩过（净息差那条：检索命中，模型仍答"资料里没有"）。
+
+改完参数后跑一次，对比 `--json` 保存的旧报告，就知道有没有变好。
+
+加 `--skip-answer` 可只跑检索层（快，不花钱）。
 
 ### 前端测试
 
