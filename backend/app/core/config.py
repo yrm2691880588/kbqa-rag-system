@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     # 运行环境：dev=本地开发（宽松自检）；prod=生产部署（严格自检，关键配置缺失直接拒绝启动）
     app_env: str = "dev"
     app_name: str = "KBQA-RAG"
+
+    # 要加载的业务领域（app/domain/<name>/）。
+    #
+    # 为什么放在配置里而不是写死：
+    #   同一套 Core 要能服务多个业务领域，
+    #   靠这个开关决定启动时加载哪一个。未选中的领域代码留在磁盘但不导入。
+    #
+    # 默认 generic（通用兜底），方便开发和测试；
+    # 生产环境（APP_ENV=prod）会强制要求显式设置，见下方校验。
+    domain: str = "generic"
     debug: bool = True
     api_prefix: str = "/api/v1"
     # 是否暴露接口文档（/docs）。生产可设为 false 减少信息暴露；演示场景保持 true
@@ -69,7 +79,18 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = "text-embedding-v4"
     embedding_dimensions: int = 1024        # v4 默认 1024 维
-    embedding_batch_size: int = 16          # 每次同时向量化多少段文本（节省请求数）
+    # 每次同时向量化多少段文本。
+    #
+    # ⚠️ 上限 10 是供应商的硬限制，不是我们随便定的：
+    #   DashScope text-embedding-v4 单次请求最多 10 条文本，
+    #   超过会报 "batch size is invalid, it should not be larger than 10"。
+    #
+    # 实测踩过这个坑：原来是 16。普通的 .md 文档片段少（6~9 个），
+    # 凑不满 16 所以没出错；但 Excel 有 40 个片段，第一批 16 条直接被拒，
+    # 表现为"入库失败"。
+    #
+    # 换 embedding 供应商时要重新确认这个上限。
+    embedding_batch_size: int = 10
     embedding_max_retries: int = 3          # 网络抖动时重试次数
     embedding_timeout: int = 60             # 单次请求超时（秒）
 
@@ -85,6 +106,18 @@ class Settings(BaseSettings):
     rerank_api_key: str = ""
     rerank_model: str = ""              # 例：gte-rerank-v2（阿里云百炼）
     rerank_base_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    # 本地重排服务地址（可选）。
+    #
+    # 为什么不把模型装进主环境：torch + 模型要 2~3GB，
+    # 塞进来会拖慢所有功能启动、可能撞版本、导出项目还白带依赖。
+    # 所以拆成独立进程（scripts/rerank_server.py），主后端 HTTP 调用。
+    #
+    # 优先级：本地服务 > 云 API > 不重排。
+    # 本服务没起或挂了，自动降级到云 API；都没有就不重排（不影响问答）。
+    #
+    # 例：http://127.0.0.1:8020
+    rerank_local_url: str = ""
+
     rerank_timeout_seconds: float = 10.0   # 重排超时（秒）。超时/出错一律"跳过重排、用原顺序"，绝不因此让问答失败
 
     # ===== M2 知识库入库相关 =====
@@ -97,13 +130,114 @@ class Settings(BaseSettings):
     upload_dir: str = "data/uploads"
 
     # ===== M3 问答检索参数 =====
-    retrieval_top_k: int = 6            # 最终引用给模型的片段上限
+    # 向量召回的候选数量。
+    #
+    # ⚠️ 这是"漏斗入口"，不能太小。
+    #   实测：问「某个指标是多少」时，含答案的片段在原始结果里排第 10~20 位。
+    #   top_k=6 时它根本进不了候选，后面去噪再精准也没用 ——
+    #   表现成"资料里明明有，模型却说没有"。
+    #
+    #   为什么敢调大：向量检索返回 N 条的成本几乎不变（一次查询），
+    #   真正贵的是把这些内容塞给模型。所以入口放宽、出口（max_docs）收紧，
+    #   才是正确策略。
+    # ---------- 混合检索 ----------
+    #
+    # 向量检索（语义相近）+ 关键词检索（字面命中）两路，用 RRF 融合。
+    #
+    # 为什么需要关键词这一路（实测依据）：
+    #   向量检索对"表格里的一行"这种短文本区分度不高。
+    #   问「某个指标是多少」时，含 `2.12%` 的片段在向量结果里排第 20 位，
+    #   被其他财务指标挤下去 —— 表现成"资料里明明有，模型却说没有"。
+    #   关键词检索按字面命中，能直接捞出来。
+    #
+    # ⚠️ 默认**关闭**。实测受控对比（重排不可用时，唯一变量是混合检索）：
+    #
+    #     纯向量：4/6
+    #     混合：  3/6
+    #
+    #   改善 1 个（某个指标：关键词把它捞出来了）
+    #   变差 2 个（"风险"、"负责人"：关键词路引入了噪音，把正确答案挤下去）
+    #
+    #   净效果 -1。"负责人"那条最典型：本应命中组织架构文档，
+    #   混合后只剩投委会纪要。
+    #
+    # 为什么变差：问句提取的关键词不够精准时（如「某公司」「主要风险」），
+    # 会把大量只沾边的片段拉进来，RRF 融合后反而压过了向量检索的精确判断。
+    #
+    # 保留开关是因为：
+    #   · 它的思路是对的（向量对短文本区分度差是真实问题）
+    #   · 单独测试时「某个指标」确实被救回来了
+    #   · 将来配合"更好的关键词提取"或"权重调节"可能翻盘
+    #
+    # 但在拿出正的受控对比数据之前，默认不开。
+    # 关键词补充（不是全量融合，注意区别）。
+    #
+    # 两版实现的受控对比：
+    #   全量 RRF 融合：纯向量 4/6 → 混合 3/6（失败，净 -1）
+    #   关键词补充：  纯向量 3/6 → 补充后 5/6（成功，净 +2，无一个变差）
+    #
+    # 为什么全量融合失败：关键词提取不准时拉进大量只沾边的片段，
+    # RRF 让这些噪音因为「多路命中」压过了向量的精确判断。
+    # 典型受害 case：「负责人」本应命中组织架构文档，融合后只剩投委会纪要。
+    #
+    # 为什么补充模式安全：
+    #   · 只做加法，不挤掉任何已有结果
+    #   · 追加的片段排在末尾，不影响原有排序
+    #   · 误判代价只是「多一条没用的引用」，而不是「把正确答案挤下去」
+    hybrid_search_enabled: bool = True
+
+    retrieval_top_k: int = 20
     retrieval_candidate_k: int = 16     # 向量检索先取回的候选片段数（多召回，供过滤挑选）
     retrieval_score_threshold: float = 0.45  # 相似度绝对下限：低于该值视为"没命中"，不硬答
     retrieval_margin_ratio: float = 0.72  # 相对过滤：候选按"文档最高分"排序后，分数低于
     #                                  # 最高分文档的 ratio 倍的文档整篇丢弃（去噪关键参数）
-    retrieval_max_docs: int = 3          # 回答最多引用几篇不同文档（避免无关文档凑数）
-    retrieval_chunks_per_doc: int = 2    # 同一文档内最多取几条片段（防刷屏）
+    # 回答最多引用几篇不同文档。
+    #
+    # 3 → 5 的调整依据（实测）：
+    #   问「某公司的某个指标是多少」时，含答案的片段排在召回结果第 17 位，
+    #   属于年报这篇文档。但年报的**最高分片段**排名不高，
+    #   按文档最高分排序后进不了前 3 → 整篇被砍 → 模型说"资料里没有"。
+    #
+    #   这不是入口问题（top_k 已经 20，片段在里面），
+    #   而是**出口太窄**：只留 3 篇文档。
+    #
+    # 为什么不再往上加：
+    #   引用列表变成"杂货单"时，用户看不完，模型也容易被无关片段干扰。
+    #   5 是"覆盖常见场景"与"不失控"的折中。
+    retrieval_max_docs: int = 5
+
+    # ---------- 多轮对话的问题改写 ----------
+    #
+    # 解决什么问题：同一会话里用户追问"这三家谁的利润最好"，
+    # 而知识库文档里写的是具体公司名 —— 检索拿"这三家"必然搜不到。
+    # 改写后变成"某某公司 某某公司 某某指标 对比"这样可检索的查询。
+    #
+    # 关掉（false）后行为与改造前完全一致，不发任何额外请求。
+    # ---------- 工具调用 ----------
+    #
+    # 模型可以调用工具（计算器、日期解析）来获得比"心算"更可靠的结果。
+    # 哪些工具可用由领域配置决定（DomainSpec.allowed_tools），
+    # 这里是全局上限。
+    tool_max_rounds: int = 3
+    """单次问答最多允许几轮工具调用。
+
+    为什么要上限：
+        模型可能反复调用（算错再算、找不到再找），没上限会烧钱且可能死循环。
+        3 轮足够处理「先解析时间 → 再算增长率」这类两步任务。
+
+    设为 0 等于关闭工具调用（即使领域配置了工具）。
+    """
+
+    query_rewrite_enabled: bool = True
+    query_rewrite_history_rounds: int = 3   # 改写时参考最近几轮对话（太多容易把改写带偏）
+    query_rewrite_max_len: int = 80         # 改写结果长度上限，超了认为模型没按要求输出
+
+    # 同一文档内最多取几条片段。
+    #
+    # 2 条经常不够：财务表格被拆成多行后，
+    # 两个不同指标可能落在不同片段里，
+    # 只取 2 条会漏掉用户问的那个指标。3 条是折中。
+    retrieval_chunks_per_doc: int = 3
     llm_max_history_rounds: int = 8     # 多轮对话中最多携带几轮历史进上下文
     llm_max_tokens: int = 2048          # 单次回答最大输出长度
     # 说明：这里曾经有一个 llm_stream 开关（是否流式输出），已删除（代码收口）。
@@ -159,7 +293,7 @@ class Settings(BaseSettings):
     content_filter_enabled: bool = True
     # 用户提问命中敏感词时是否直接拦下。
     # 开着可以挡住"拿系统生成违规内容"的人；如果客户希望"只审回答、不审提问"，
-    # 可以把它关掉（比如法律/医疗类知识库，提问里天然会出现这类词）。
+    # 可以把它关掉（某些领域的提问里天然会出现这类词）。
     content_filter_block_question: bool = True
     # AI 回答命中敏感词时的处理方式：
     #   replace —— 掐断生成，替换成一句标准提示（推荐，保平台不担责）
@@ -303,6 +437,27 @@ class Settings(BaseSettings):
             self.app_env = "prod"
         if not self.is_prod and not self.secret_key.strip():
             self.secret_key = DEV_FALLBACK_SECRET
+
+        # 领域必须在已知列表内（拼错 domain 名会在这里被拦住，
+        # 而不是等到第一次问答时提示词变空白）。
+        #
+        # 为什么生产环境额外要求「不能是 generic」：
+        #   generic 是兜底领域，提示词刻意保持中性（「你是知识库问答助手」）。
+        #   生产上线后如果忘了设 DOMAIN，回答会变得很泛、质量下降，
+        #   但因为不报错，很可能很久都没人发现。这里强制要求显式指定。
+        self.domain = (self.domain or "").strip().lower()
+        from app.domain import KNOWN_DOMAINS
+
+        if self.domain not in KNOWN_DOMAINS:
+            raise ValueError(
+                f"DOMAIN 配置无效：{self.domain!r}。"
+                f"可选值：{', '.join(KNOWN_DOMAINS)}"
+            )
+        if self.is_prod and self.domain == "generic":
+            raise ValueError(
+                "生产环境（APP_ENV=prod）必须显式指定 DOMAIN，不能使用兜底的 generic。"
+                "请设置为 ecommerce / finance 等具体领域。"
+            )
         return self
 
 

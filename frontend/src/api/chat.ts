@@ -55,6 +55,24 @@ export function deleteSession(id: number) {
   return http.delete(`/sessions/${id}`)
 }
 
+/**
+ * 导出一封会话为 Excel。
+ *
+ * 返回的是**二进制流**（responseType: 'blob'），
+ * 调用方拿到后要自己触发浏览器下载。
+ *
+ * 为什么不在这个函数里直接下载：
+ *   下载涉及 DOM 操作（创建 a 标签、点击、清理），
+ *   API 层保持"只拿数据"，由视图层决定怎么用，
+ *   测试时也能直接拿到 blob 校验内容。
+ */
+export function exportSession(sessionId: number) {
+  return http.get<Blob>(`/sessions/${sessionId}/export`, {
+    responseType: 'blob',
+    timeout: 60000,
+  })
+}
+
 export function listMessages(sessionId: number) {
   return http.get<ChatMessage[]>(`/sessions/${sessionId}/messages`)
 }
@@ -88,6 +106,10 @@ export type StreamEvent =
   | { type: 'saved'; message_id: number }
   // 回答命中内容安全策略：后端已停止生成，前端要用 text 把已显示的内容整体覆盖掉
   | { type: 'blocked'; text: string; mode: string }
+  // 答案自检未通过后重做的完整答案：整体替换已流出的内容
+  | { type: 'replace'; text: string }
+  // 自检结论：ok=false 表示多轮重做后仍不合格
+  | { type: 'verified'; ok: boolean; reason?: string }
   | { type: 'error'; message: string }
 
 /**
@@ -182,6 +204,12 @@ export function streamChat(
                 break
               case 'saved':
                 onEvent({ type: 'saved', message_id: Number(data.message_id) })
+                break
+              case 'replace':
+                onEvent({ type: 'replace', text: data.text ?? '' })
+                break
+              case 'verified':
+                onEvent({ type: 'verified', ok: Boolean(data.ok), reason: data.reason ?? '' })
                 break
               case 'blocked':
                 onEvent({ type: 'blocked', text: data.text ?? '', mode: data.mode ?? 'replace' })

@@ -17,9 +17,10 @@ REM  已经启动过的部分会自动跳过。
 REM  关闭请双击项目根目录的「停止.bat」。
 REM ============================================================
 
-cd /d "%~dp0"
-set "ROOT=%~dp0"
-set "ROOT=%ROOT:~0,-1%"
+REM 本脚本在 scripts\ 下，根目录是它的上一级
+cd /d "%~dp0.."
+REM 用 %%~fI 把 "scripts\.." 解析成规范化的绝对路径
+for %%I in ("%~dp0..") do set "ROOT=%%~fI"
 set "PIDDIR=%ROOT%\.run"
 
 REM ---------- 端口配置（可在根目录 .env 里覆盖）----------
@@ -29,17 +30,29 @@ REM   BACKEND_PORT=8010
 REM   FRONTEND_PORT=5180
 set "BACKEND_PORT=8000"
 set "FRONTEND_PORT=5173"
+REM 要加载的业务领域：ecommerce=电商 / finance=财经 / generic=通用
+REM 默认 ecommerce（与改造前界面一致）；想换领域改 .env 里的 DOMAIN。
+set "DOMAIN=ecommerce"
 if exist "%ROOT%\.env" (
     for /f "usebackq tokens=1,2 delims==" %%A in ("%ROOT%\.env") do (
         if /i "%%A"=="BACKEND_PORT" if not "%%B"=="" set "BACKEND_PORT=%%B"
         if /i "%%A"=="FRONTEND_PORT" if not "%%B"=="" set "FRONTEND_PORT=%%B"
+        if /i "%%A"=="DOMAIN" if not "%%B"=="" set "DOMAIN=%%B"
     )
+
 )
+
+REM 领域名 -> 中文展示名（启动横幅给用户看）
+REM 放在 if exist(...) 块之后：块内 %DOMAIN% 会在解析括号时就展开，
+REM 那时 .env 还没读完，映射会用到旧值。
+set "DOMAIN_LABEL=通用"
+if /i "%DOMAIN%"=="ecommerce" set "DOMAIN_LABEL=电商"
+if /i "%DOMAIN%"=="finance" set "DOMAIN_LABEL=财经"
 if not exist "%PIDDIR%" mkdir "%PIDDIR%"
 
 echo.
 echo ============================================================
-echo   KBQA-RAG 电商知识库问答系统 - 一键启动
+echo   KBQA-RAG 知识库问答系统 - 一键启动    [领域: %DOMAIN_LABEL%（%DOMAIN%）]
 echo ============================================================
 echo.
 
@@ -216,6 +229,12 @@ if not errorlevel 1 (
 
 REM 用 PowerShell 启动并把 PID 记到文件，停止时据此精确停止
 REM （explorer 方式启动的窗口不依赖本脚本，脚本退出服务照常运行）
+REM 显式把领域传给后端进程：
+REM   Start-Process 启动的是新进程，会继承当前环境变量；
+REM   这里再 set 一次是为了确保 .env 里读到的值一定传下去。
+set "DOMAIN=%DOMAIN%"
+set "KBQA_DOMAIN=%DOMAIN%"
+
 powershell -NoProfile -Command ^
   "$p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/k','\"\"%PYTHON_EXE%\" -m uvicorn app.main:app --host 127.0.0.1 --port %BACKEND_PORT% --reload\"' -WorkingDirectory '%ROOT%\backend' -PassThru; $p.Id | Out-File -Encoding ascii '%PIDDIR%\backend.pid'"
 if errorlevel 1 (

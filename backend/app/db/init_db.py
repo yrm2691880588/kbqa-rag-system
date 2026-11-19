@@ -44,6 +44,7 @@ async def init_db(eng=None, session_factory=None) -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_columns)          # users 表历史补列（phone / register_ip）
         await conn.run_sync(_ensure_tenancy_columns)  # 租户相关列 + 摘掉旧的全站唯一约束
+        await conn.run_sync(_ensure_domain_columns)   # 领域列（多领域隔离）
         await conn.run_sync(_resync_sequences)        # 校准自增计数器（见函数注释）
 
     # 第二步：数据层面 —— 确保存在一个默认组织，并把"无归属"的老数据收进去
@@ -61,6 +62,17 @@ async def init_db(eng=None, session_factory=None) -> None:
 
 
 # --------------------------------------------------------------------------- 结构迁移
+
+
+def _is_postgres(sync_conn) -> bool:
+    """当前连接是不是 PostgreSQL。
+
+    为什么要抽出来（原来三处各写一遍 `sync_conn.dialect.name == "postgresql"`）：
+      · 改判定逻辑时要改三处，漏一处就是"某个分支在 PG 上永远不执行"
+      · SQLite 与 PG 在 information_schema / PRAGMA 上的差异很大，
+        这类判断会越加越多，集中一处便于统一维护
+    """
+    return sync_conn.dialect.name == "postgresql"
 
 
 def _ensure_columns(sync_conn) -> None:
@@ -124,9 +136,10 @@ def _drop_global_unique_kb_name(sync_conn) -> None:
       残留的影响只是"不同组织不能有同名知识库"这一条限制，
       **不影响数据隔离（不会串数据）**，所以不阻断启动。
     """
+    # 这里仍需要 dialect 字符串：下面既要判断 sqlite，也要打进日志
     dialect = sync_conn.dialect.name
 
-    if dialect == "postgresql":
+    if _is_postgres(sync_conn):
         # 约束名由 PostgreSQL 自动生成，形如 knowledge_bases_name_key
         sync_conn.execute(text("ALTER TABLE knowledge_bases DROP CONSTRAINT IF EXISTS knowledge_bases_name_key"))
         sync_conn.execute(text("DROP INDEX IF EXISTS ix_knowledge_bases_name"))
@@ -158,16 +171,113 @@ def _drop_global_unique_kb_name(sync_conn) -> None:
     logger.info("数据库方言 %s：跳过 knowledge_bases 旧唯一约束清理（非 PostgreSQL/SQLite）", dialect)
 
 
+def _ensure_domain_columns(sync_conn) -> None:
+    """轻量迁移：给 knowledge_bases / sessions 补上 domain 列与索引。
+
+    为什么必须做：
+        Base.metadata.create_all 只建"缺失的表"，不会给已有表加列。
+        老库升级后没有 domain 列，一查知识库列表就报
+        "no such column: knowledge_bases.domain"。
+
+    ⚠️ 实现上有个必须注意的点（这里踩过坑）：
+        不能写成
+            try: ALTER TABLE ... except: pass
+        在 SQLite 上能蒙混过关，但 PostgreSQL 里事务内一旦有语句失败，
+        整个事务进入 aborted 状态，后续命令全被拒绝，
+        报 "current transaction is aborted" —— init_db 后面的步骤全崩，
+        后端启动直接失败（表现为端口在监听但不响应请求）。
+
+        正确做法：**先查元数据确认列/索引不存在，再执行 DDL**。
+        下面的实现同时兼容 SQLite 与 PostgreSQL。
+
+    默认值 generic：
+        老数据不属于任何明确领域，归到通用领域。
+        不假设"旧数据都属于某个特定领域"—— 那种假设将来很难纠正。
+    """
+    for table in ("knowledge_bases", "sessions"):
+        # ---- 1) 列是否存在 ----
+        if _is_postgres(sync_conn):
+            exists = sync_conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = :t AND column_name = 'domain'"
+                ),
+                {"t": table},
+            ).first()
+        else:
+            # SQLite：PRAGMA 返回列信息，name 在第 2 列
+            cols = sync_conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            exists = any(row[1] == "domain" for row in cols)
+
+        if not exists:
+            sync_conn.execute(
+                text(
+                    f"ALTER TABLE {table} "
+                    "ADD COLUMN domain VARCHAR(32) NOT NULL DEFAULT 'generic'"
+                )
+            )
+
+        # ---- 2) 索引是否存在 ----
+        if _is_postgres(sync_conn):
+            idx_exists = sync_conn.execute(
+                text("SELECT 1 FROM pg_indexes WHERE indexname = :n"),
+                {"n": f"ix_{table}_domain"},
+            ).first()
+        else:
+            idx_rows = sync_conn.execute(
+                text(f"PRAGMA index_list({table})")
+            ).fetchall()
+            # PRAGMA index_list 的 name 在第 2 列
+            idx_exists = any(row[1] == f"ix_{table}_domain" for row in idx_rows)
+
+        if not idx_exists:
+            sync_conn.execute(
+                text(
+                    f"CREATE INDEX ix_{table}_domain ON {table} (domain)"
+                )
+            )
+
+
 def _ensure_tenancy_indexes(sync_conn) -> None:
     """回填完成后再建"同组织内知识库名唯一"的复合唯一索引。
 
     放在回填之后是因为：回填前所有行的 org_id 都是 NULL，此时建唯一索引没有意义。
     索引名与模型里 UniqueConstraint 的名字保持一致，PostgreSQL 下重复执行会自动跳过。
     """
+    # 先摘掉旧的两列唯一约束/索引：它会把不同领域的同名库误判为冲突。
+    #
+    # ⚠️ 不能用 try/except 吞异常：
+    #   PostgreSQL 里事务内一旦有语句失败，整个事务进入 aborted 状态，
+    #   后续所有命令都被拒绝（报 current transaction is aborted）。
+    #   这里踩过这个坑 —— 直接导致后端启动失败。
+    #   正确做法：先查元数据确认存在，再执行删除。
+    if _is_postgres(sync_conn):
+        # PG 上可能是"约束"也可能是"索引"，两种都查
+        old_constraint = sync_conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.table_constraints "
+                "WHERE constraint_name = 'uq_knowledge_bases_org_name'"
+            )
+        ).first()
+        if old_constraint:
+            sync_conn.execute(
+                text("ALTER TABLE knowledge_bases DROP CONSTRAINT uq_knowledge_bases_org_name")
+            )
+        old_index = sync_conn.execute(
+            text("SELECT 1 FROM pg_indexes WHERE indexname = 'uq_knowledge_bases_org_name'")
+        ).first()
+        if old_index:
+            sync_conn.execute(text("DROP INDEX uq_knowledge_bases_org_name"))
+    else:
+        # SQLite：唯一索引就是 index
+        idx_rows = sync_conn.execute(text("PRAGMA index_list(knowledge_bases)")).fetchall()
+        if any(row[1] == "uq_knowledge_bases_org_name" for row in idx_rows):
+            sync_conn.execute(text("DROP INDEX uq_knowledge_bases_org_name"))
+
     sync_conn.execute(
         text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_bases_org_name "
-            "ON knowledge_bases (org_id, name)"
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_bases_org_domain_name "
+            "ON knowledge_bases (org_id, domain, name)"
         )
     )
 

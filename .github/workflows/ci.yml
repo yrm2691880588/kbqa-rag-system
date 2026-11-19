@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # develop 是日常开发分支，main 只接受从 develop 合并过来的代码。
+    # 两个都要触发，否则在 develop 上开发时 CI 完全不跑，等于没有防护。
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 # 同一分支的新推送取消上一次还在跑的构建，省时间也省额度
 concurrency:
@@ -14,8 +16,17 @@ concurrency:
 jobs:
   # ---------------- 后端：单元测试 ----------------
   backend:
-    name: 后端测试
+    # 按领域矩阵跑：每个领域单独走一遍完整测试。
+    #
+    # 为什么必须这样：领域抽象之后，Core 是共用的、领域是不同的。
+    # 只跑一个领域的话，"finance 领域漏配了某个字段"这类问题
+    # 要等到真正切过去用才会暴露 —— 那时已经在导出项目里了。
+    name: 后端测试 · ${{ matrix.domain }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # 一个领域挂了不要掩盖其他领域的结果
+      matrix:
+        domain: [generic, ecommerce, finance]
     # 起一个真实 PostgreSQL：并发额度测试必须跑在真数据库上才有意义。
     # SQLite 内存库是单连接，并发请求实际是排队的，永远测不出竞态。
     services:
@@ -66,7 +77,13 @@ jobs:
           # 指向上面 services 起的真实 PostgreSQL，让并发额度测试真正执行
           # （不设这一项，那 2 个并发用例会被 skip —— 等于没测）
           KBQA_TEST_PG_URL: "postgresql+asyncpg://kbqa:ci-test-password@127.0.0.1:5432/kbqa_test"
-        run: python -m unittest discover -s tests -t . -v
+          # 当前矩阵领域：决定加载哪套领域配置、以及跑哪套领域专属测试
+          DOMAIN: ${{ matrix.domain }}
+        # 用 run_tests.py 而不是 unittest discover：
+        #   discover 只扫 tests/ 目录，发现不到 app/domain/<name>/tests/ 里的
+        #   领域专属测试 —— 那等于领域测试写了却从不执行。
+        #   run_tests.py 会把两处都纳入。
+        run: python run_tests.py
 
   # ---------------- 前端：类型检查 + 构建 ----------------
   frontend:
@@ -150,6 +167,70 @@ jobs:
               print("注意：存在 high 级漏洞（当前为 dev server 相关，不阻塞合并，详见注释）。")
           print("通过。")
           PY
+
+  # ---------------- 导出功能验证 ----------------
+  #
+  # 为什么单独一个 job：
+  #   导出脚本 (scripts/extract.py) 是"把某个领域裁成独立项目"的核心功能。
+  #   它一旦失效是**隐性**的 —— 母项目的测试全过，但使用者拿到产物才发现跑不起来。
+  #   ADR-0001 里承诺了"导出脚本可在 CI 中验证"，这里兑现。
+  #
+  # 验证什么：
+  #   1. 脚本能跑通（不报错、产物非空）
+  #   2. 产物的 CI 矩阵只剩本领域（否则使用者一 push 就看到红）
+  #   3. 产物能加载 app（导入链完整）
+  #   4. 产物里不含其他领域目录（物理隔离）
+  extract-check:
+    name: 导出验证
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: 安装依赖
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 导出电商领域并校验
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: "ci-export-check-key-0123456789abcdef"
+          APP_ENV: "dev"
+          LLM_API_KEY: "ci-fake-key-not-real"
+          EMBEDDING_API_KEY: "ci-fake-key-not-real"
+          # 产物目录。用变量而不是写死 /tmp，这样本地也能照着跑一遍
+          # 用变量而不是写死领域名：导出脚本要能处理任意领域，
+          # CI 只验证其中一个的话，换领域导出就可能悄悄坏掉。
+          EXPORT_DOMAIN: "finance"
+          OUT_DIR: "/tmp/kbqa-export-check"
+        run: |
+          python scripts/extract.py "$EXPORT_DOMAIN" "$OUT_DIR"
+
+          echo "--- 1. 产物非空 ---"
+          test -d $OUT_DIR/backend/app/domain || (echo "产物缺少 domain 目录"; exit 1)
+
+          echo "--- 2. CI 矩阵只剩本领域 ---"
+          python -c "import sys,pathlib,os; t=pathlib.Path('$OUT_DIR/.github/workflows/ci.yml').read_text(encoding='utf-8'); d=os.environ['EXPORT_DOMAIN']; sys.exit(0 if ('domain: [' + d + ']') in t else 1)" || (echo "产物 CI 矩阵未收敛为单领域"; exit 1)
+
+          echo "--- 3. 不存在其他领域目录 ---"
+          for d in ecommerce generic; do
+            if [ "$d" = "$EXPORT_DOMAIN" ]; then continue; fi
+            if [ -d "$OUT_DIR/backend/app/domain/$d" ]; then
+              echo "隔离失败：产物里出现了 $d 目录"; exit 1
+            fi
+          done
+
+          echo "--- 4. 产物能加载 app ---"
+          cd "$OUT_DIR/backend"
+          python -c "from app.main import app; from app.domain import get_domain; print('领域:', get_domain().display_name)"
 
   # ---------------- 密钥扫描：防止误提交密钥 ----------------
   secret-scan:

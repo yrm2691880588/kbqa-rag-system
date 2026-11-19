@@ -1,4 +1,4 @@
-"""知识库表：类似"文件夹"，把商品资料分类管理，管理员维护。"""
+"""知识库表：类似"文件夹"，把资料分类管理，管理员维护。"""
 
 import datetime as dt
 
@@ -11,7 +11,17 @@ from app.db.base import Base
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
     # 名称唯一性从"全站唯一"改为"同组织内唯一"（见下方 org_id 说明）
-    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_knowledge_bases_org_name"),)
+    __table_args__ = (
+        # 唯一性范围是「同组织 + 同领域 + 同名字」。
+        #
+        # 为什么必须把 domain 算进去（真实踩到的）：
+        #   原来只有 (org_id, name)，导致 A 领域建了「产品库」之后，
+        #   切到 B 领域再也建不了同名库 —— 报 UNIQUE 冲突，
+        #   但用户在 B 领域根本看不到那个库，这个报错毫无道理。
+        UniqueConstraint(
+            "org_id", "name", "domain", name="uq_knowledge_bases_org_domain_name"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     # 归属组织（租户）。检索与列表一律按本列过滤，这是数据隔离的关键列。
@@ -22,6 +32,17 @@ class KnowledgeBase(Base):
     )
     # 名称：只在"同一组织内"唯一。不同客户各有一个叫"产品手册"的库是完全正常的。
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # 所属业务领域（ecommerce / finance / generic）。
+    #
+    # 为什么需要它：领域切换后，不同领域的知识库应该互相看不到。
+    # 没有这个字段时，切到别的领域仍会看到原领域的库和历史会话 ——
+    # 用户会困惑"我明明选的是另一个领域"。
+    #
+    # 为什么可空 + 有默认值：存量数据需要迁移，且默认值让旧数据自动归到
+    # 一个确定领域（见迁移脚本里的回填逻辑）。
+    domain: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="generic", server_default="generic", index=True
+    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

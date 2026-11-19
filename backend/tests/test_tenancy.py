@@ -27,6 +27,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core import tenancy
 from app.db.base import Base
+from app.domain import get_domain
 from app.models.knowledge_base import KnowledgeBase
 from app.models.organization import Organization
 from app.models.user import User
@@ -73,9 +74,19 @@ class TenancyTestCase(unittest.TestCase):
                 User(id=4, username="homeless", password_hash="x", role="user", org_id=None),
             ])
             await db.flush()
+            # ⚠️ 必须显式指定 domain = 当前加载的领域。
+            #
+            # 为什么不靠默认值（generic）：领域过滤是独立于组织的一层，
+            # 如果这里用默认 generic 而测试跑的 DOMAIN 是 ecommerce，
+            # 所有查询都会被领域过滤掉，测试会集体失败 —— 但那是测试数据
+            # 没跟上，不是功能有问题。
+            #
+            # 这些测试是要验证「组织隔离」，所以让数据落在当前领域里，
+            # 领域维度由 test_domain_isolation_in_tenancy 单独验证。
+            cur_domain = get_domain().name
             db.add_all([
-                KnowledgeBase(id=1, name="产品手册", org_id=1),
-                KnowledgeBase(id=2, name="产品手册", org_id=2),  # 故意同名：不同组织允许
+                KnowledgeBase(id=1, name="产品手册", org_id=1, domain=cur_domain),
+                KnowledgeBase(id=2, name="产品手册", org_id=2, domain=cur_domain),  # 故意同名：不同组织允许
             ])
             await db.commit()
 
@@ -155,12 +166,34 @@ class TenancyTestCase(unittest.TestCase):
                     self.assertIsNotNone(await tenancy.resolve_kb_scope(db, u, [999]))
         _run(t())
 
-    def test_superadmin_scope_keeps_none(self):
-        """超管不指定时保持 None（= 不限制），这是唯一允许出现 None 的角色。"""
+    def test_superadmin_scope_limited_by_domain(self):
+        """超管不指定时返回**当前领域的全部库**，不再是 None。
+
+        为什么规则改了（这是一次有意的语义修正）：
+            原来超管返回 None，语义是"不限制"。在只有组织维度的时代这是对的。
+            但加了领域维度后，None 意味着"检索时连别的领域的库也带上" ——
+            实测确认过：财经领域能检索到电商库的内容。
+
+            领域不是权限概念，而是"当前加载哪套业务配置"。
+            超管跨组织是运营需要，跨领域没有意义。
+
+        超管"能看到所有组织"这个能力没有被削弱 ——
+        只是收敛到"所有组织里、属于当前领域的库"。
+        """
         async def t():
             async with self.Session() as db:
                 root = await db.get(User, 3)
-                self.assertIsNone(await tenancy.resolve_kb_scope(db, root, None))
+                scope = await tenancy.resolve_kb_scope(db, root, None)
+
+                # 不再是 None
+                self.assertIsNotNone(
+                    scope,
+                    "超管范围不该是 None —— 那会让检索跨领域",
+                )
+                # 两个组织的库都在当前领域 → 都能看到
+                self.assertEqual(sorted(scope), [1, 2],
+                                 "超管仍应看到所有组织中属于当前领域的库")
+                # 指定具体的库 → 原样返回（它们都在当前领域）
                 self.assertEqual(await tenancy.resolve_kb_scope(db, root, [2]), [2])
         _run(t())
 
@@ -352,6 +385,93 @@ class TestRegisterPolicyEndpoint(unittest.TestCase):
             from app.api.v1.auth import get_register_policy
             got = await get_register_policy()
             self.assertEqual(set(got.model_dump().keys()), {"invite_required"})
+        _run(t())
+
+
+class DomainIsolationInTenancyTestCase(unittest.TestCase):
+    """领域隔离必须独立于组织隔离生效。
+
+    ## 为什么单独测
+
+    「组织隔离」和「领域隔离」是两个维度：
+      · 组织：A 公司看不到 B 公司的库 —— 权限边界
+      · 领域：财经领域看不到电商领域建的库 —— 业务配置边界
+
+    平台超管可以跨组织（运营需要），但**不应该跨领域** ——
+    领域决定的是"当前加载哪套提示词和词表"，换领域读到别的行业资料没有意义。
+
+    最初实现只做了组织维度，超管走"不限制"分支直接绕过了领域过滤，
+    实测能检索到别的领域的库。
+    """
+
+    def setUp(self):
+        self.engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+        self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
+        _run(self._seed())
+
+    async def _seed(self):
+        async with self.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        cur = get_domain().name
+        other = "generic" if cur != "generic" else "ecommerce"
+
+        async with self.Session() as db:
+            db.add(Organization(id=1, name="A公司", invite_code="code-aaa"))
+            await db.flush()
+            db.add(User(id=1, username="alice", password_hash="x", role="user", org_id=1))
+            db.add(User(id=3, username="root", password_hash="x", role="admin",
+                        org_id=1, is_superadmin=True))
+            await db.flush()
+            db.add_all([
+                # 当前领域 + 另一个领域，同组织
+                KnowledgeBase(id=10, name="本领域库", org_id=1, domain=cur),
+                KnowledgeBase(id=11, name="其它领域库", org_id=1, domain=other),
+            ])
+            await db.commit()
+
+    def test_member_sees_only_current_domain(self):
+        """普通成员只能看到当前领域的库。"""
+        async def t():
+            async with self.Session() as db:
+                alice = await db.get(User, 1)
+                ids = await tenancy.accessible_kb_ids(db, alice)
+                self.assertIn(10, ids, "本领域的库应当可见")
+                self.assertNotIn(11, ids, "其它领域的库不应可见")
+        _run(t())
+
+    def test_superadmin_also_limited_by_domain(self):
+        """平台超管可以跨组织，但不能跨领域。
+
+        这是修复的核心：之前超管返回 None（不限制），
+        等于在检索时把另一个领域的库也带进来。
+        """
+        async def t():
+            async with self.Session() as db:
+                root = await db.get(User, 3)
+
+                # 不指定：只返回当前领域的库（不能再是 None）
+                scope = await tenancy.resolve_kb_scope(db, root, None)
+                self.assertIsNotNone(scope, "超管的范围不该是 None —— 那等于跨领域")
+                self.assertIn(10, scope)
+                self.assertNotIn(11, scope, "超管也被领域限制，不该看到其它领域")
+
+                # 显式指定别领域的库：应被剔除
+                self.assertEqual(await tenancy.resolve_kb_scope(db, root, [11]), [])
+                # 指定本领域的库：正常
+                self.assertEqual(await tenancy.resolve_kb_scope(db, root, [10]), [10])
+        _run(t())
+
+    def test_get_scoped_kb_rejects_other_domain(self):
+        """按 id 直接取别的领域的库 → 404。"""
+        async def t():
+            async with self.Session() as db:
+                alice = await db.get(User, 1)
+                from fastapi import HTTPException
+
+                with self.assertRaises(HTTPException) as ctx:
+                    await tenancy.get_scoped_kb(db, alice, 11)
+                self.assertEqual(ctx.exception.status_code, 404)
         _run(t())
 
 

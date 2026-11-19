@@ -26,6 +26,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain import get_domain
 from app.models.knowledge_base import KnowledgeBase
 from app.models.user import User
 
@@ -57,11 +58,33 @@ async def accessible_kb_ids(db: AsyncSession, user: User) -> list[int]:
         # users.org_id 外键是 ondelete=SET NULL，组织被删后账号就会落到这个分支。
         if user.org_id is None:
             return []
-        stmt = select(KnowledgeBase.id).where(KnowledgeBase.org_id == user.org_id)
+        # 领域过滤：切到某领域后，只应看到该领域建的库。
+        # 不加这一条的话，检索链会把别的领域的库也检索出来 ——
+        # 列表上虽然看不到，但内容会串进回答（实测确认过）。
+        stmt = select(KnowledgeBase.id).where(
+            KnowledgeBase.org_id == user.org_id,
+            KnowledgeBase.domain == get_domain().name,
+        )
     else:
-        stmt = select(KnowledgeBase.id)
+        stmt = select(KnowledgeBase.id).where(
+            KnowledgeBase.domain == get_domain().name,
+        )
     rows = (await db.execute(stmt)).scalars().all()
     return list(rows)
+
+
+async def domain_kb_ids(db: AsyncSession) -> list[int]:
+    """当前领域下的全部知识库 id（不区分组织）。
+
+    专门给平台超管用：超管可以跨组织，但**不应该跨领域** ——
+    领域决定的是"当前加载哪套业务配置"，不是权限范围。
+
+    不加这一层的话，超管在 A 领域也能检索到 B 领域的库（实测确认过）。
+    """
+    stmt = select(KnowledgeBase.id).where(
+        KnowledgeBase.domain == get_domain().name,
+    )
+    return list((await db.execute(stmt)).scalars().all())
 
 
 async def resolve_kb_scope(
@@ -83,7 +106,16 @@ async def resolve_kb_scope(
     requested = [int(x) for x in (requested or [])]
 
     if is_unrestricted(user):
-        return sorted(set(requested)) if requested else None
+        # 平台超管：可以跨组织，但**不能跨领域**。
+        #
+        # 为什么？领域是"当前加载哪套业务配置"（提示词/禁令/词表），
+        # 不是权限概念。让超管在 A 领域读到 B 领域的资料，等于
+        # 把另一个行业的内容混进当前业务，这跟身份权限无关。
+        in_domain = set(await domain_kb_ids(db))
+        if not requested:
+            # 不指定 → 当前领域的全部库（而不是 None＝完全不限制）
+            return sorted(in_domain)
+        return sorted(in_domain & set(requested))
 
     allowed = set(await accessible_kb_ids(db, user))
     if not requested:
@@ -110,6 +142,13 @@ async def get_scoped_kb(db: AsyncSession, user: User, kb_id: int) -> KnowledgeBa
     kb = await db.get(KnowledgeBase, kb_id)
     if kb is None or not is_unrestricted(user) and kb.org_id != user.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "知识库不存在")
+
+    # 领域校验：不能通过直接猜 id 访问别的领域的库。
+    # 用 404 而不是 403 —— 与上面的组织校验保持一致的语义：
+    # 让"无权访问"和"不存在"无法区分，不泄露资源是否存在。
+    if kb.domain != get_domain().name:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "知识库不存在")
+
     return kb
 
 
@@ -138,7 +177,11 @@ async def accessible_kb_ids_for_org(db: AsyncSession, org_id: int | None) -> lis
     """
     if org_id is None:
         return []
-    stmt = select(KnowledgeBase.id).where(KnowledgeBase.org_id == org_id)
+    stmt = select(KnowledgeBase.id).where(
+        KnowledgeBase.org_id == org_id,
+        # 对外 API 同样要按领域隔离：一个 Key 只应看到当前领域的库
+        KnowledgeBase.domain == get_domain().name,
+    )
     return list((await db.execute(stmt)).scalars().all())
 
 

@@ -30,11 +30,24 @@ class TestDocLevelDenoise(unittest.TestCase):
     # ---------- 正常用例 ----------
 
     def test_单文档多片段全保留_数量受限(self):
-        """只来自一篇文档的多个片段都相关，保留（不误删同文档内容）。"""
+        """只来自一篇文档的多个片段都相关，保留（不误删同文档内容）。
+
+        ⚠️ 断言读配置而不是写死数字。
+            之前写死"最多 2 条（chunks_per_doc=2）"，
+            把配置调成 3 之后这个测试就挂了 ——
+            但代码是对的，挂的是测试。
+        """
+        from app.core.config import settings
+
         hits = [hit(1, 0.90), hit(1, 0.88), hit(1, 0.85)]
         out = _doc_level_denoise(hits)
         self.assertTrue(out, "不应把唯一的文档全部丢掉")
-        self.assertLessEqual(len(out), 2, "同文档最多保留 2 条（chunks_per_doc=2）")
+        self.assertLessEqual(
+            len(out),
+            settings.retrieval_chunks_per_doc,
+            f"同文档片段数不应超过 retrieval_chunks_per_doc"
+            f"（当前 {settings.retrieval_chunks_per_doc}）",
+        )
 
     def test_低分文档整篇丢弃(self):
         """价格表 0.77 与手表手册 0.45 分差明显 → 只保留价格表，手表整篇丢弃。"""

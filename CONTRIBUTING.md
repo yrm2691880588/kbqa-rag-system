@@ -49,10 +49,68 @@ npm run dev
 
 ```bash
 cd backend
-python -m unittest discover -s tests -t . -v
+
+# 跑「Core 通用测试 + 当前领域的专属测试」
+DOMAIN=ecommerce python run_tests.py
+
+# Windows PowerShell 写法
+$env:DOMAIN="ecommerce"; python run_tests.py
 ```
 
-当前基线：**511 个用例，应全部通过**（本地无 PostgreSQL 时会跳过 3 个需真库的用例）。
+**不要**直接用 `python -m unittest discover -s tests`：
+该命令只扫 `tests/` 目录，**发现不到** `app/domain/<name>/tests/` 下的领域专属测试 ——
+表现为"跑了 529 个用例全过"，其实领域测试一个都没跑。这是静默漏测。
+
+`run_tests.py` 会把两处都纳入，且分两批执行（避免两个测试包同名冲突）。
+
+当前基线（三个领域各跑一遍，均应通过）：
+
+| DOMAIN | Core 用例 | 领域用例 |
+|---|---|---|
+| `generic` | 724 | 0 |
+| `ecommerce` | 724 | 18 |
+| `finance` | 724 | 10 |
+
+> 基线会随功能增加而变化。如果你加了测试，请顺手更新这张表 ——
+> 数字对不上的话，下一个人会怀疑是自己弄坏了什么。
+
+本地无 PostgreSQL 时会跳过 3 个需真库的用例。
+
+### 工具与新增能力
+
+以下模块有独立测试，改动时请确保它们仍然通过：
+
+| 测试文件 | 覆盖内容 |
+|---|---|
+| `tests/test_tools.py` | 计算器安全性（12 种注入）、日期解析、注册表、工具描述 |
+| `tests/test_intent_routing.py` | 意图分流（闲聊/违规/实时/超范围/正常），重点验证不误伤 |
+| `tests/test_domain_data_isolation.py` | 领域字段、唯一约束、隔离 |
+| `tests/test_embedding_batch.py` | 向量化批次上限 |
+| `tests/test_table_chunking.py` | Markdown 表格切分 + **正文不丢失** |
+| `tests/test_stream_save.py` | 流式回答增量落库、中断处理 |
+
+**特别注意**：`test_tools.py` 里的注入测试是安全边界，不能为了让它变绿而放宽校验。
+
+### 质量评估（改检索/分块/提示词后必跑）
+
+```bash
+cd backend
+python scripts/eval_all.py --set eval/eval_set.finance.json --kb 财经示例库
+```
+
+输出两层数字：
+
+| 层 | 测什么 | 指标 |
+|---|---|---|
+| 检索层 | 找没找对文档 | Hit@1 / Hit@3 / MRR |
+| 回答层 | 回答里有没有正确答案 | 关键词命中率 |
+
+**两层都要看。** 只测检索层会漏掉「检索对了但模型说没有」的情况 ——
+这个坑真实踩过（净息差那条：检索命中，模型仍答"资料里没有"）。
+
+改完参数后跑一次，对比 `--json` 保存的旧报告，就知道有没有变好。
+
+加 `--skip-answer` 可只跑检索层（快，不花钱）。
 
 ### 前端测试
 

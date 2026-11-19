@@ -55,7 +55,7 @@ echo.
 REM ---------- 2.5) 清理 uvicorn reload 产生的孤儿子进程 ----------
 echo [3/4] 清理残留的 uvicorn 子进程...
 powershell -NoProfile -Command ^
-  "$n = 0; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue | ForEach-Object { if ($_.CommandLine -match 'multiprocessing-fork' -and $_.CommandLine -match 'parent_pid') { $parent = $_.ParentProcessId; $alive = Get-Process -Id $parent -ErrorAction SilentlyContinue; if (-not $alive) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ } } }; Write-Output ('  清理孤儿进程: ' + $n + ' 个')"
+  "$root = '%ROOT%'; $n = 0; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue | ForEach-Object { if ($_.CommandLine -match 'multiprocessing-fork' -and $_.CommandLine -match 'parent_pid') { if ($_.CommandLine -like ('*' + $root + '*')) { $parent = $_.ParentProcessId; $alive = Get-Process -Id $parent -ErrorAction SilentlyContinue; if (-not $alive) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ } } } }; Write-Output ('  清理本项目孤儿进程: ' + $n + ' 个')"
 if errorlevel 1 echo   [提示] 孤儿进程清理跳过（无 PowerShell 或无残留）。
 
 REM ---------- 3) 数据库容器 ----------
@@ -151,7 +151,22 @@ REM   b) 命令行含 uvicorn app.main:app（后端独有）
 REM   c) 命令行含 vite（前端独有）+ 端口匹配
 REM 用 PowerShell 而不是 findstr：实测 findstr 对中文路径与引号处理会误判
 set "VERDICT="
-for /f "usebackq delims=" %%R in (`powershell -NoProfile -Command "try { $p = Get-CimInstance Win32_Process -Filter 'ProcessId=%PID%' -ErrorAction Stop; $c = $p.CommandLine; $ours = ($c -match 'langchain RAG') -or ($c -match 'uvicorn app.main:app') -or ($c -match 'vite'); if ($ours) { 'YES' } else { 'NO' } } catch { 'GONE' }" 2^>nul`) do set "VERDICT=%%R"
+REM 判据只有一个：命令行里含**本项目的绝对路径**。
+REM 不用 "vite"、"uvicorn app.main:app" 这类通用词 —— 
+REM 用户可能同时开着别的 Vite/FastAPI 项目，宽泛匹配会误杀。
+REM 识别规则（组合特征，必须足够具体，否则会误杀或认不出自己）：
+REM   后端：uvicorn app.main:app + 本项目端口，或含 kbqa 虚拟环境，或含项目路径
+REM   前端：含项目路径，或 vite + 本项目端口
+REM 不用"只认绝对路径" —— 实测后端命令行里没有路径（启动脚本先 cd 再起）
+REM 识别规则：用 .Contains() 做纯文本匹配，不用正则。
+REM 原因：这段代码在 .bat 里要过三层转义（bat 的 ^、PowerShell 引号、正则的 \），
+REM 实测正则写法会报「无法识别的转义 \k」，因此改用字面子串匹配。
+REM
+REM 判据（任一命中即认为是本项目）：
+REM   a) 含 uvicorn app.main:app 且含 --port 本项目端口
+REM   b) 含 vite 且含本项目前端端口
+REM   c) 含项目绝对路径
+for /f "usebackq delims=" %%R in (`powershell -NoProfile -Command "try { $p = Get-CimInstance Win32_Process -Filter 'ProcessId=%PID%' -ErrorAction Stop; $c = $p.CommandLine; $port = '%PORT%'; $be = $c.Contains('uvicorn app.main:app') -and $c.Contains('--port ' + $port); $fe = $c.Contains('vite') -and $c.Contains($port); $pa = $c.StartsWith('%ROOT%') -or $c.Contains('%ROOT%'); $ours = $be -or $fe -or $pa; if ($ours) { 'YES' } else { 'NO' } } catch { 'GONE' }" 2^>nul`) do set "VERDICT=%%R"
 
 if "!VERDICT!"=="GONE" (
     echo   [提示] PID %PID% 进程已不存在（端口可能处于 TIME_WAIT 残留，几十秒后自动释放）。

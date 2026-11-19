@@ -83,6 +83,13 @@
             <template #default="{ row }">
               <span class="file-cell">
                 <el-icon class="file-icon"><Document /></el-icon>{{ row.filename }}
+                <!-- 版本号：只在第 2 版及以上显示，避免正常文件多一堆 "v1" 噪音 -->
+                <el-tag
+                  v-if="row.version && row.version > 1"
+                  size="small"
+                  type="info"
+                  class="ver-tag"
+                >第 {{ row.version }} 版</el-tag>
               </span>
             </template>
           </el-table-column>
@@ -155,7 +162,7 @@
     <el-dialog v-model="kbDialog.visible" :title="kbDialog.isEdit ? '编辑知识库' : '新建知识库'" width="440px">
       <el-form label-width="70px">
         <el-form-item label="名称" required>
-          <el-input v-model="kbDialog.name" :disabled="kbDialog.isEdit" maxlength="100" placeholder="如：手机商品库" />
+          <el-input v-model="kbDialog.name" :disabled="kbDialog.isEdit" maxlength="100" placeholder="如：产品资料库" />
         </el-form-item>
         <el-form-item label="简介">
           <el-input v-model="kbDialog.description" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="这个库放什么资料，方便以后识别" />
@@ -374,12 +381,138 @@ async function doUploadBatch(opt: UploadRequestOptions) {
 let uploadTimer: number | undefined
 const pendingFiles: File[] = []
 
+/**
+ * 检查哪些文件与已有文档同名，并询问用户是否覆盖。
+ *
+ * 为什么要前端先查一遍：
+ *   后端默认不覆盖（返回 409）。如果逐个让后端返回 409 再弹窗，
+ *   批量上传时用户会被弹窗打断很多次。
+ *   前端先扫一遍、一次性问清楚，体验好得多。
+ *
+ * 比对规则与后端保持一致：**去掉扩展名**再比。
+ *   这样 name.md 改成 name.txt（导出格式变了）也算"同一份资料更新"。
+ *
+ * @returns true 表示可以继续（覆盖或不冲突），false 表示用户取消。
+ */
+/**
+ * 检查哪些文件与已有文档同名，并询问用户如何处理。
+ *
+ * ## 三个选项（用户明确要求的）
+ *
+ *   [覆盖]     新文件替换旧文件（版本号 +1）
+ *   [保留两份] 新文件改名后作为独立文档上传，旧的保留
+ *   [取消上传] 都不传
+ *
+ * ## 为什么返回 File[] 而不是 boolean
+ *
+ *   选"保留两份"时要改写文件对象的名字，
+ *   所以要把处理后的文件列表返回给调用方，而不是只回一个真/假。
+ *
+ * ## 为什么"保留两份"用改名实现
+ *
+ *   后端按"去掉扩展名的文件名"判重。加个时间戳后缀就不重名了。
+ *   比在后端加 `keep_both` 参数简单得多，而且避免让
+ *   "同一库里有多个同名文档"这个状态污染后续的覆盖判断。
+ *
+ * @returns 处理后的文件列表；返回空数组表示用户取消。
+ */
+async function confirmOverwrite(files: File[]): Promise<File[]> {
+  if (!currentKb.value) return []
+
+  const NL = String.fromCharCode(10)
+  const allDocs = docs.value
+  const stemOf = (n: string) => (n.includes('.') ? n.slice(0, n.lastIndexOf('.')) : n)
+
+  const existing = new Map<string, DocItem>()
+  for (const d of allDocs) existing.set(stemOf(d.filename), d)
+
+  const clashing = new Set<File>()
+  const lines: string[] = []
+  for (const f of files) {
+    const hit = existing.get(stemOf(f.name))
+    if (hit) {
+      clashing.add(f)
+      lines.push(`· ${hit.filename}（当前第 ${hit.version} 版）→ ${f.name}`)
+    }
+  }
+
+  if (!clashing.size) return files   // 没有同名，原样返回
+
+  const shown = lines.slice(0, 5).join(NL)
+  const more = lines.length > 5 ? NL + `…等 ${lines.length} 个` : ''
+
+  const text =
+    `以下 ${lines.length} 个文件与已有文档同名：` +
+    NL + NL + shown + more + NL + NL +
+    '请选择处理方式：' + NL +
+    '· 覆盖：新内容替换旧的，版本号 +1' + NL +
+    '· 保留两份：新文件改名后单独上传，旧的保留'
+
+  let choice: 'overwrite' | 'keep' | 'cancel'
+  try {
+    // confirm = 覆盖；cancel 在这里被当作"保留两份"
+    // （Element Plus 的 MessageBox 只有两个按钮，
+    //   这里用 confirmButton/cancelButton 承载前两个选项，
+    //   第三个用 distinguishCancelAndClose 区分：
+    //   点右上角 X 或按 ESC = 取消上传）
+    await ElMessageBox.confirm(text, '发现同名文档', {
+      type: 'warning',
+      confirmButtonText: '覆盖',
+      cancelButtonText: '保留两份',
+      distinguishCancelAndClose: true,
+    })
+    choice = 'overwrite'
+  } catch (action) {
+    // 'cancel' = 点了"保留两份"；'close' = 关闭弹窗
+    choice = action === 'cancel' ? 'keep' : 'cancel'
+  }
+
+  if (choice === 'cancel') {
+    ElMessage.info('已取消上传')
+    return []
+  }
+
+  if (choice === 'overwrite') {
+    // 原样返回，调用方带 overwrite=true 上传
+    return files
+  }
+
+  // 保留两份：给冲突的文件改名（加时间戳后缀），其余不动
+  return files.map((f) => {
+    if (!clashing.has(f)) return f
+    const dot = f.name.lastIndexOf('.')
+    const base = dot > 0 ? f.name.slice(0, dot) : f.name
+    const ext = dot > 0 ? f.name.slice(dot) : ''
+    const stamp = new Date()
+      .toISOString()
+      .slice(0, 19)
+      .replace(/[-:T]/g, '')
+    // File 构造函数保持原有的 MIME 与最后修改时间
+    return new File([f], `${base}_${stamp}${ext}`, {
+      type: f.type,
+      lastModified: f.lastModified,
+    })
+  })
+}
+
 async function flushUploads() {
   if (!currentKb.value || !pendingFiles.length) return
   const files = pendingFiles.splice(0, pendingFiles.length)
+
+  // 先问清楚同名怎么处理，拿到"实际要传的文件列表"
+  const toUpload = await confirmOverwrite(files)
+  if (!toUpload.length) return   // 用户取消（消息已在函数内提示）
+
+  // 只有"选了覆盖"才需要 overwrite=true。
+  // 选"保留两份"时文件已经改过名，不会再撞名，带 overwrite 也无害，
+  // 但语义上不该带 —— 万一以后后端对 overwrite 有别的行为，这里更安全。
+  const needOverwrite = toUpload.length === files.length
+    && toUpload.every((f, i) => f === files[i])
+
   uploading.value = true
   try {
-    const res = await uploadDocsBatch(currentKb.value.id, files)
+    // eslint-disable-next-line prettier/prettier
+    const res = await uploadDocsBatch(currentKb.value.id, toUpload, needOverwrite)
     if (res.failed === 0) {
       ElMessage.success(`${res.succeeded} 个文档已上传，开始入库`)
     } else {
@@ -632,5 +765,9 @@ onBeforeUnmount(stopPoll)
   color: var(--text-1);
   white-space: pre-wrap;
   word-break: break-all;
+}
+.file-cell .ver-tag {
+  margin-left: 6px;
+  vertical-align: middle;
 }
 </style>

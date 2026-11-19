@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.domain import get_domain
 from app.core.logging_setup import setup_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.startup_check import run_startup_checks
@@ -58,9 +59,15 @@ async def lifespan(app: FastAPI):
     logger.info("服务已关闭")
 
 
+# 接口文档标题与描述来自领域配置。
+# 原来写死成某个行业的名称，换领域后 /docs 页面顶部
+# 还写着原来的行业词 —— 这是**对外可见**的字符串，不属于注释，
+# 导出脚本的注释清理器也清不到它。
+_startup_domain = get_domain()
+
 app = FastAPI(
-    title=settings.app_name,
-    description="电商知识库 RAG 问答系统",
+    title=_startup_domain.app_title,
+    description=f"{_startup_domain.display_name}知识库 RAG 问答系统",
     version="0.1.0",
     lifespan=lifespan,
     # 接口文档开关：/docs 与 /redoc 是否对外暴露（EXPOSE_DOCS=false 可关闭，减少信息暴露）

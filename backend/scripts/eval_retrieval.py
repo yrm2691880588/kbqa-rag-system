@@ -36,6 +36,16 @@ import os
 import pathlib
 import sys
 
+# Windows 控制台默认 GBK，输出 emoji（❌✅⚠️）会直接抛 UnicodeEncodeError，
+# 整个脚本跑不起来。这里强制用 UTF-8 输出 —— 纯 Python 侧修复，
+# 不要求用户改控制台设置。
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:  # noqa: BLE001 - 某些终端不支持，忽略即可
+        pass
+
 BACKEND = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 

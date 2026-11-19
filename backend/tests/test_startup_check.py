@@ -13,6 +13,21 @@ from app.core.config import DEV_FALLBACK_SECRET, Settings
 from app.core.startup_check import collect_startup_issues, run_startup_checks
 
 
+def _pick_concrete_domain() -> str:
+    """选一个具体领域名（不能是兜底的 generic）。
+
+    生产环境校验要求"必须显式指定领域"，所以测试要提供一个具体值。
+    用 KNOWN_DOMAINS 里第一个非 generic 的项 ——
+    母项目里通常是 ecommerce，导出产物里就是它唯一那个领域。
+    """
+    from app.domain import KNOWN_DOMAINS
+
+    for name in KNOWN_DOMAINS:
+        if name != "generic":
+            return name
+    return KNOWN_DOMAINS[0]
+
+
 def _make_settings(**overrides) -> Settings:
     """构造一个不读本地 .env 的配置对象，避免测试受本机环境影响。
 
@@ -40,6 +55,14 @@ def _make_settings(**overrides) -> Settings:
         qdrant_url="http://qdrant:6333",
         llm_mock=False,
         registration_requires_invite=True,
+        # 生产环境必须显式指定领域（不能是兜底的 generic），
+        # 否则 Settings 构造会直接抛 ValidationError。
+        #
+        # ⚠️ 不能写死某个领域名：导出产物只有一个领域，
+        # 写死 "ecommerce" 的话导出 finance 时这条会报
+        # "DOMAIN 值非法：'ecommerce'，可选值：finance"。
+        # 用"第一个非 generic 的已知领域"自动适配。
+        domain=_pick_concrete_domain(),
     )
     base.update(overrides)
     return Settings(**base)

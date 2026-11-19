@@ -64,8 +64,8 @@
     <!-- ════════ 右：对话主区 ════════ -->
     <main class="main">
       <div v-if="!currentSession" class="welcome">
-        <h2>商品知识库智能问答</h2>
-        <p>点击左侧「新对话」开始提问。AI 将依据知识库资料回答，并标注引用来源。</p>
+        <h2>{{ domain.config.value.welcome_title }}</h2>
+        <p>{{ domain.config.value.welcome_hint }}</p>
         <div class="tips">
           <div class="tip-card" v-for="(t, i) in demoQuestions" :key="i" @click="quickAsk(t)">
             {{ t }}
@@ -183,6 +183,16 @@
                 @keydown="onKeydown"
               />
               <div class="input-actions">
+                <el-tooltip content="把这封对话导出成 Excel" placement="top">
+                  <el-button
+                    v-if="currentSession && displayMessages.length"
+                    text
+                    :loading="exporting"
+                    @click="doExport"
+                  >
+                    <el-icon style="margin-right: 4px"><Download /></el-icon>导出
+                  </el-button>
+                </el-tooltip>
                 <span class="input-tip">Enter 发送 · Shift+Enter 换行</span>
                 <el-button v-if="sending" type="danger" @click="stopGenerate">
                   <el-icon style="margin-right: 4px"><VideoPause /></el-icon>停止
@@ -231,15 +241,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ChatDotRound, Delete, EditPen, Plus, Promotion, Top, Bottom, VideoPause, WarningFilled,
+  ChatDotRound, Delete, EditPen, Plus, Promotion, Top, Bottom, VideoPause, WarningFilled, Download,
 } from '@element-plus/icons-vue'
 import { listKBs, type KnowledgeBase } from '@/api/kb'
 import {
   createSession, deleteSession, listMessages, listSessions, renameSession,
   setMessageFeedback,
-  streamChat, type ChatMessage, type ChatSession, type Citation,
-} from '@/api/chat'
+  streamChat, type ChatMessage, type ChatSession, type Citation, exportSession } from '@/api/chat'
 import { useAuthStore } from '@/stores/auth'
+import { useDomain } from '@/stores/domain'
 import {
   createTypingMessage,
   createUserMessage,
@@ -251,6 +261,7 @@ import { renderAnswer } from '@/utils/answerRender'
 import FeedbackDialog from '@/components/chat/FeedbackDialog.vue'
 
 const auth = useAuthStore()
+const domain = useDomain()
 
 /** 原因 key -> 中文标签（与后端 FEEDBACK_REASONS 一致） */
 const REASON_LABELS: Record<string, string> = {
@@ -281,17 +292,50 @@ const scopeKbId = ref(0) // 0=全部库；>0=指定库（仅新会话生效）
 const displayMessages = ref<MsgItem[]>([])
 const inputText = ref('')
 const sending = ref(false)
-let abortCtrl: AbortController | null = null
+
+/**
+ * 每个会话各自的请求控制器（按会话 id 存）。
+ *
+ * 为什么不用单个 abortCtrl：
+ *   允许多会话并行生成后，单个变量会被互相踩。
+ *   实测问题：A 会话在后台生成完毕调 finishSending，
+ *   把全局 abortCtrl 置空 —— 而此时它指向的是 B 会话的请求，
+ *   于是 B 点「停止生成」没反应。
+ *
+ * 现在按会话存：结束时只删自己那个，互不影响。
+ */
+const activeControllers = new Map<number, AbortController>()
+
+/**
+ * 正在后台生成的回答（按会话 id 索引）。
+ *
+ * 为什么需要它：
+ *   用户切到别的会话时，请求不该被中断（他还想回来看结果）。
+ *   但 displayMessages 在切换时会被清空，事件回调找不到目标就会丢弃内容。
+ *
+ *   所以把"正在生成的回答"独立存一份：事件先写这里，
+ *   当前显示的正好是这个会话时再同步到界面。
+ *
+ * 结构：
+ *   sessionId → { key, content, thinking, citations, done }
+ */
+const pendingAnswers = new Map<
+  number,
+  {
+    key: string
+    content: string
+    thinking: string
+    citations: unknown[] | null
+    done: boolean
+  }
+>()
 
 const msgListRef = ref<HTMLElement>()
 const bottomAnchor = ref<HTMLElement>()
 
-const demoQuestions = [
-  '星跃S10手机的电池容量和快充是多少？',
-  '星翼蓝牙耳机支持防水吗？',
-  '星耀空气净化器A8适用多大面积？',
-  '星翼智能手表能带着游泳吗？',
-]
+// 示例问题来自领域配置，不同领域各不相同。
+// 原来写死成某个行业的问题，换领域后点开就完全跑题。
+const demoQuestions = computed(() => domain.config.value.example_questions)
 
 /** 顶部栏显示的检索范围标签 */
 const scopeKbLabel = computed<string>(() => {
@@ -302,7 +346,9 @@ const scopeKbLabel = computed<string>(() => {
 
 const placeholder = computed(() => (sending.value ? 'AI 正在回答中…' : `向 ${scopeName.value} 提问…`))
 const scopeName = computed(() => {
-  if (!currentSession.value) return '商品知识库'
+  if (!currentSession.value) return domain.config.value.display_name
+    ? `${domain.config.value.display_name}知识库`
+    : '知识库'
   const scope = currentSession.value.kb_scope
   if (!scope || !scope.length) return '全部知识库'
   const kb = activeKbs.value.find((k) => k.id === scope[0])
@@ -311,6 +357,8 @@ const scopeName = computed(() => {
 
 // ---------------- 生命周期 ----------------
 onMounted(async () => {
+  // 先拿领域文案（标题、示例问题）。失败不阻塞：store 里有中性兜底。
+  domain.loadDomainConfig().catch(() => {})
   try {
     activeKbs.value = (await listKBs(false)).data
   } catch { /* 忽略 */ }
@@ -320,7 +368,13 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  abortCtrl?.abort()
+  // 组件卸载时中断所有进行中的请求（用户离开页面了，继续跑没意义）
+  for (const ctrl of activeControllers.values()) {
+    ctrl.abort()
+  }
+  activeControllers.clear()
+  // 缓存也清掉，避免残留引用
+  pendingAnswers.clear()
 })
 
 // ---------------- 会话操作 ----------------
@@ -344,17 +398,68 @@ async function newSession() {
 
 async function switchSession(s: ChatSession, force = false) {
   if (currentSession.value?.id === s.id && !force) return
-  abortCtrl?.abort()
-  sending.value = false
+
+  // ⚠️ 这里**不能** abort。
+  //
+  // 原来写的是 abortCtrl?.abort()，导致用户切走时正在生成的回答被直接丢弃
+  // （后端也不保存），切回来只看到自己的提问 —— 实测反馈过这个问题。
+  //
+  // 现在改为：请求在后台继续，回答写入 pendingAnswers。
+  // 只有用户明确点「停止生成」时才 abort（那是明确意图，见 stopGenerate）。
+
+  const prevId = currentSession.value?.id
   currentSession.value = s
   displayMessages.value = []
   loadingHistory.value = true
+
+  // 切会话时，"正在回答中"的标志只应反映**目标会话**的状态
+  sending.value = pendingAnswers.has(s.id) && !pendingAnswers.get(s.id)!.done
+
   try {
     const msgs = (await listMessages(s.id)).data
     displayMessages.value = msgs.map((m) => toMsgItem(m))
+
+    // 如果这个会话有后台还在生成的回答，把它接上。
+    //
+    // ⚠️ 要判断"后端是不是已经存了这条"，否则会出现两条一样的回答。
+    //
+    //   后端有增量落库（_StreamSaver，每 120 字写一次），
+    //   所以切回来时后端可能已经有这条消息了。
+    //   这时再从缓存追加一条，用户就看到两个不同长度但内容相同的回答。
+    //
+    //   判断方式：后端最后一条如果是 assistant，且内容以缓存内容开头，
+    //   说明就是同一条 —— 交给后端版本（它更完整），不追加缓存。
+    const pending = pendingAnswers.get(s.id)
+    if (pending) {
+      const last = displayMessages.value[displayMessages.value.length - 1]
+      const backendHasIt =
+        last &&
+        last.role === 'assistant' &&
+        pending.content &&
+        (last.content === pending.content || last.content.startsWith(pending.content))
+
+      if (backendHasIt) {
+        // 后端版本更新，用它；缓存就此作废
+        pendingAnswers.delete(s.id)
+      } else {
+        const item = createTypingMessage()
+        item.key = pending.key
+        item.content = pending.content
+        item.thinking = pending.thinking
+        item.citations = pending.citations as never
+        item.typing = !pending.done
+        displayMessages.value.push(item)
+      }
+    }
+
     await scrollBottom(false)
   } catch { /* 拦截器已提示 */ } finally {
     loadingHistory.value = false
+  }
+
+  // prevId 只用于调试：切换前的会话在后台继续生成
+  if (prevId && pendingAnswers.has(prevId)) {
+    // 不做任何事 —— 只是保持这个分支存在，便于将来扩展
   }
 }
 
@@ -384,6 +489,14 @@ async function doDelete() {
   try {
     await deleteSession(t.id)
     sessions.value = sessions.value.filter((x) => x.id !== t.id)
+
+    // 清掉这个会话的后台缓存。
+    //
+    // 为什么必须清：pendingAnswers 是按会话 id 存的 Map，
+    // 不清的话删掉的会话会一直占着内存（含完整回答文本），
+    // 用户长时间使用后内存只增不减 —— 典型的 Map 泄漏。
+    pendingAnswers.delete(t.id)
+
     if (currentSession.value?.id === t.id) {
       currentSession.value = null
       displayMessages.value = []
@@ -402,7 +515,14 @@ async function doDelete() {
 async function send(opts: { question?: string; regenerate?: boolean } = {}) {
   const isRegen = !!opts.regenerate
   const q = isRegen ? (opts.question ?? '') : inputText.value.trim()
-  if (!q || sending.value || !currentSession.value) return
+  // 守卫只拦"**当前这个会话**正在回答中"，不拦全局。
+  //
+  // 为什么：sending 原来是个全局开关，切到别的会话后它还挂在 true，
+  // 导致在新会话里发不出问题（或者反过来，两个会话同时发时状态互相踩）。
+  // 现在按会话判断：只有本会话有未完成的生成时才拦。
+  if (!q || !currentSession.value) return
+  const pendingHere = pendingAnswers.get(currentSession.value.id)
+  if (pendingHere && !pendingHere.done) return
   if (!isRegen) inputText.value = ''
 
   const sid = currentSession.value.id
@@ -418,18 +538,61 @@ async function send(opts: { question?: string; regenerate?: boolean } = {}) {
   await scrollBottom(true)
   sending.value = true
 
+  // 登记到 pendingAnswers：即使用户切走，内容也写在这里不会丢
+  pendingAnswers.set(sid, {
+    key: aiItem.key,
+    content: '',
+    thinking: '',
+    citations: null,
+    done: false,
+  })
+
   let hasStreamedAnswer = false
   let errorMsg = ''
   /** 唯一关掉全局"正在回答中"状态的地方，确保每条路径都走到 */
   const finishSending = () => {
-    sending.value = false
-    abortCtrl = null
+    // 标记这个会话的后台生成已结束。
+    //
+    // 为什么保留 pendingAnswers 而不是直接删：
+    //   用户可能正切在别的会话，切回来时还要靠它恢复内容。
+    //   这里只标 done，内容留着；下次在这个会话里发新问时再覆盖。
+    const pending = pendingAnswers.get(sid)
+    if (pending) pending.done = true
+
+    // 只有当前正在看的会话结束时，才解除全局"回答中"
+    if (currentSession.value?.id === sid) {
+      sending.value = false
+    }
+
+    // ⚠️ 只删**自己这个会话**的控制器。
+    //    原来写的是 `abortCtrl = null`（全局置空），
+    //    在多会话并行时会清掉别人的控制器，导致别人的"停止生成"失效。
+    activeControllers.delete(sid)
   }
-  abortCtrl = streamChat(
+  const _ctrl = streamChat(
     sid,
     q,
     (ev) => {
+      // ── 先写后台缓存，再决定要不要刷界面 ──
+      //
+      // 为什么是这个顺序：
+      //   用户可能在生成过程中切到别的会话。那时 displayMessages 已被清空，
+      //   按原来"找不到 item 就 return"的写法，后续内容全部丢失，
+      //   切回来只看到自己的提问（实测反馈的 bug）。
+      //
+      //   现在先无条件写进 pendingAnswers（按会话 id 存），
+      //   只有当用户"正在看这个会话"时才同步到界面。
+      const pending = pendingAnswers.get(sid)
+      if (pending) {
+        if (ev.type === 'answer') pending.content += ev.text
+        else if (ev.type === 'thinking') pending.thinking += ev.text
+        else if (ev.type === 'meta') pending.citations = ev.citations
+        else if (ev.type === 'replace') pending.content = ev.text
+        else if (ev.type === 'done') pending.done = true
+      }
+
       const item = displayMessages.value.find((m) => m.key === aiItem.key)
+      // 找不到 item 说明用户切到别的会话了：内容已进缓存，这里安全跳过
       if (!item) return
       switch (ev.type) {
         case 'meta':
@@ -444,6 +607,20 @@ async function send(opts: { question?: string; regenerate?: boolean } = {}) {
           item.content += ev.text
           hasStreamedAnswer = true
           item.typing = false
+          break
+        case 'replace':
+          // 自检未通过后重做的完整答案：**整体替换**已流出的内容。
+          //
+          // 为什么是替换而不是追加：
+          //   追加会让用户看到"答案 + 更正"两段，读完还得自己判断以哪个为准。
+          //   直接替换成核查过的版本，用户看到的永远只有一份最终答案。
+          item.content = ev.text
+          hasStreamedAnswer = true
+          item.typing = false
+          break
+        case 'verified':
+          // 自检结论：false 表示多轮重做后仍不合格（此时 content 已被替换成说明）
+          if (!ev.ok) item.verifiedFailed = true
           break
         case 'no_hit':
           item.noHit = true
@@ -499,10 +676,67 @@ async function send(opts: { question?: string; regenerate?: boolean } = {}) {
     () => {},          // onComplete：本轮不需要额外收尾，留空
     { regenerate: isRegen },
   )
+
+  // 登记控制器：让「停止生成」能找到**这个会话**的请求
+  if (_ctrl) activeControllers.set(sid, _ctrl)
+}
+
+/**
+ * 导出当前会话为 Excel。
+ *
+ * 为什么用 axios 的 blob + 手动创建 a 标签下载，而不是 window.open：
+ *   window.open 依赖 Cookie 鉴权，但拿不到失败原因
+ *   （401/500 时只会弹出一个空白页或 JSON 错误页，用户一头雾水）。
+ *   走 axios 能统一走拦截器，失败时有正常提示。
+ */
+const exporting = ref(false)
+
+async function doExport() {
+  const sid = currentSession.value?.id
+  if (!sid || exporting.value) return
+
+  exporting.value = true
+  try {
+    const res = await exportSession(sid)
+    const blob = res.data
+
+    // 从响应头里取文件名（后端按 RFC 5987 编码过）
+    let filename = `对话记录_${sid}.xlsx`
+    const cd = String(res.headers?.['content-disposition'] || '')
+    const m = cd.match(/filename\*=UTF-8''([^;]+)/i)
+    if (m) {
+      try {
+        filename = decodeURIComponent(m[1])
+      } catch {
+        /* 解码失败就用默认名 */
+      }
+    }
+
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    // 延迟释放：立即 revoke 在部分浏览器上会导致下载中断
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000)
+
+    ElMessage.success('已开始下载')
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    exporting.value = false
+  }
 }
 
 function stopGenerate() {
-  abortCtrl?.abort()
+  // 只中断**当前会话**的请求 —— 别的会话可能在后台正常生成，不该被牵连
+  const sid = currentSession.value?.id
+  if (sid) {
+    activeControllers.get(sid)?.abort()
+    activeControllers.delete(sid)
+  }
   const item = [...displayMessages.value].reverse().find((m) => m.typing)
   if (item) {
     item.typing = false
@@ -511,6 +745,18 @@ function stopGenerate() {
       item.noHitText = '已停止生成'
     }
   }
+
+  // ⚠️ 必须把缓存标记成完成。
+  //
+  // 不标记的后果（改 pendingAnswers 时发现的）：
+  //   · pendingHere.done 一直是 false
+  //   · 切回这个会话时 sending 仍显示"正在回答中"
+  //   · 发送守卫（按会话判断）会一直拦住新提问 —— 用户以为卡死了
+  if (sid) {
+    const pending = pendingAnswers.get(sid)
+    if (pending) pending.done = true
+  }
+
   sending.value = false
 }
 

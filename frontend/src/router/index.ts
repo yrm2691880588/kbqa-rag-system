@@ -127,7 +127,23 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
-  document.title = to.meta.title ? `${to.meta.title} · 知识库问答系统` : '知识库问答系统'
+  // 浏览器标签带上当前领域名，切换领域后打开新标签页也能一眼分辨。
+  // 领域名由 stores/domain.ts 加载成功后写入 window.__dsh_domain__，
+  // 这里直接读 —— 路由守卫可能在 app 挂载前跑，那时 store 还没初始化。
+  const domainName = getDomainName()
+  const pageTitle = (to.meta.title as string) || '知识库问答'
+  document.title = domainName ? `${domainName} · ${pageTitle}` : pageTitle
 })
 
 export default router
+
+/**
+ * 取当前领域名（用于浏览器标签）。
+ *
+ * 为什么不 import store：路由守卫可能在 app 挂载前执行，
+ * 那时 store 未必初始化好。这里直接读一个模块级缓存，
+ * 由 stores/domain.ts 在加载成功后写入 —— 简单、无循环依赖。
+ */
+function getDomainName(): string {
+  return (window as unknown as { __dsh_domain__?: string }).__dsh_domain__ || ''
+}

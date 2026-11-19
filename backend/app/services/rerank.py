@@ -46,10 +46,53 @@ class RerankOutcome:
 
 
 def is_enabled() -> bool:
-    """当前是否配置了重排（填了 key 和 model 才算）。"""
+    """当前是否配置了重排。
+
+    三种情况都算启用：
+      · 配了本地服务地址（rerank_local_url）
+      · 配了云 API（key + model）
+    """
+    local = (getattr(settings, "rerank_local_url", "") or "").strip()
+    if local:
+        return True
     key = (getattr(settings, "rerank_api_key", "") or "").strip()
     model = (getattr(settings, "rerank_model", "") or "").strip()
     return bool(key and model)
+
+
+async def _rerank_local(query: str, documents: list[str]) -> list[float] | None:
+    """调用本地重排服务（BGE-reranker）。
+
+    Returns:
+        与 documents 一一对应的分数列表；失败返回 None（调用方降级）。
+    """
+    import httpx
+
+    url = (getattr(settings, "rerank_local_url", "") or "").strip().rstrip("/")
+    if not url:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.rerank_timeout_seconds) as c:
+            r = await c.post(
+                f"{url}/rerank",
+                json={"query": query, "documents": documents},
+            )
+        if r.status_code != 200:
+            logger.warning("本地重排服务返回 %s，降级", r.status_code)
+            return None
+        data = r.json()
+        scores = data.get("scores") or []
+        if len(scores) != len(documents):
+            logger.warning(
+                "本地重排返回的分数个数不符（%d vs %d），降级",
+                len(scores), len(documents),
+            )
+            return None
+        return [float(x) for x in scores]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("本地重排调用失败：%s", e)
+        return None
 
 
 def _order_stably(hits: list[dict], ranked: list[tuple[int, float]]) -> list[dict]:
@@ -179,6 +222,25 @@ async def rerank_hits(query: str, hits: list[dict], top_n: int) -> RerankOutcome
     if not hits:
         return RerankOutcome(hits, False, "无候选片段")
 
+    # ---- 优先用本地重排服务 ----
+    #
+    # 为什么本地优先：不消耗云 API 额度、延迟可控、数据不出本机。
+    # 本地挂了自动降级到云 API（下面那段），都没配就不重排。
+    if (getattr(settings, "rerank_local_url", "") or "").strip():
+        docs = [str(h.get("text") or "") for h in hits]
+        scores = await _rerank_local(query, docs)
+        if scores is not None:
+            # 转成 (下标, 分数) 再交给统一的排序函数，
+            # 复用 _order_stably —— 它会处理重号/越界，并写入 rerank_score。
+            ranked = list(enumerate(scores))
+            ordered = _order_stably(hits, ranked)
+            return RerankOutcome(
+                ordered[:top_n], True,
+                f"本地重排（BGE）{len(docs)} 条",
+            )
+        logger.warning("本地重排不可用，尝试云 API")
+
+    # ---- 降级：云 API ----
     reranker = get_reranker()
     if reranker is None:
         return RerankOutcome(hits, False, "未配置重排模型，已跳过")

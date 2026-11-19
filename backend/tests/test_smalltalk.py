@@ -10,11 +10,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.smalltalk import (
     detect_smalltalk,
-    _MSG_GREET,
     _MSG_THANKS,
     _MSG_BYE,
-    _MSG_WHOAMI,
+    _MSG_GREET_FALLBACK,
+    _MSG_WHOAMI_FALLBACK,
+    _domain_msg,
 )
+
+# 寒暄文案已改为由领域提供（不再是可以直接 import 的常量）。
+# 测试里通过 _domain_msg 取"当前领域实际会用的那句话"，与 detect_smalltalk 内部一致。
+# 这样无论 DOMAIN 是哪个领域，断言都成立 —— 测的是"返回的是本领域配置的那句"，
+# 而不是"返回的是写死的某个字符串"。
+_MSG_GREET = _domain_msg("greet_message", _MSG_GREET_FALLBACK)
+_MSG_WHOAMI = _domain_msg("whoami_message", _MSG_WHOAMI_FALLBACK)
 
 
 class TestDetectSmalltalk(unittest.TestCase):

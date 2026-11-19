@@ -274,15 +274,27 @@ class TestLegacyUpgrade(MigrationTestCase):
         _run(t())
 
     def test_composite_unique_index_is_created(self):
-        """⑤ 回填完成后要建好"(组织, 名称)"复合唯一索引。"""
+        """⑤ 回填完成后要建好"(组织, 领域, 名称)"复合唯一索引。
+
+        为什么是三元组而不是两元组：
+            多领域改造后，不同领域可以有同名知识库（电商的「产品库」
+            和财经的「产品库」互不影响）。如果约束只有 (org_id, name)，
+            电商建了之后财经再也建不了同名库 —— 而用户在财经领域
+            根本看不到那个库，这个报错毫无道理。
+        """
         async def t():
             eng, sf = await self._migrate()
             async with eng.connect() as conn:
                 names = {r[1] for r in (await conn.execute(text("PRAGMA index_list('knowledge_bases')"))).fetchall()}
             await eng.dispose()
             self.assertIn(
+                "uq_knowledge_bases_org_domain_name", names,
+                "缺少 (org_id, domain, name) 复合唯一索引：同组织同领域内可能出现重名知识库",
+            )
+            # 旧的两列索引必须已经摘掉，否则不同领域仍会被判为冲突
+            self.assertNotIn(
                 "uq_knowledge_bases_org_name", names,
-                "缺少 (org_id, name) 复合唯一索引：同组织内可能出现重名知识库",
+                "旧的 (org_id, name) 索引还在：不同领域无法建同名知识库",
             )
         _run(t())
 

@@ -3,7 +3,7 @@
 支持格式：docx / pdf / xlsx / txt / md / html
 输出统一结构 ParsedUnit：一段带来源位置信息的文本。
 - 对"连贯长文"（docx/txt/md/html/pdf 正文），按页或整篇产出单元，交给切块器递归切分；
-- 对 Excel 表格，**一行商品 = 一个单元**（电商场景关键：保证检索能命中整条商品记录）。
+- 对 Excel 表格，**一行记录 = 一个单元**（保证检索能命中整条记录）。
 """
 
 import logging

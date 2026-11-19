@@ -135,7 +135,14 @@ async def process_document(doc_id: int) -> None:
         await _set_status(doc_id, "embedding", progress=2)
         texts = [c.text for c in chunks]
         vectors: list[list[float]] = []
-        batch_size = settings.embedding_batch_size
+        # 批次大小统一由 vectorizer.effective_batch_size() 决定 ——
+        # 不在这里重复写 max/min，避免两处逻辑不一致。
+        #
+        # 为什么进度分批要和实际请求分批一致：
+        #   不一致会导致进度条跳变，而且批次错误更晚才暴露。
+        from app.services.vectorizer import effective_batch_size
+
+        batch_size = effective_batch_size()
         for start in range(0, total, batch_size):
             batch_texts = texts[start : start + batch_size]
             try:
